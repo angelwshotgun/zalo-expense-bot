@@ -421,23 +421,7 @@ export class ZaloBotHandler {
 
       // Trường hợp 2: Đang thiếu số tiền / amount (Người dùng nhắn tên mặt hàng trước đó)
       if (pending.missing_field === 'amount') {
-        let amount: number | null = null;
-        const trComplexMatch = lowerText.match(/(\d+)\s*(?:tr|triệu)\s*(\d+)/);
-        const trSimpleMatch = lowerText.match(/(\d+(?:[.,]\d+)?)\s*(?:tr|triệu)/);
-        const kMatch = lowerText.match(/(\d+(?:[.,]\d+)?)\s*(?:k|nghìn|ngàn)/);
-        const rawMatch = lowerText.replace(/[,.\s]/g, '').match(/^\d+$/);
-
-        if (trComplexMatch) {
-          const main = parseInt(trComplexMatch[1], 10) * 1000000;
-          const sub = parseInt(trComplexMatch[2].padEnd(6, '0').slice(0, 6), 10);
-          amount = main + sub;
-        } else if (trSimpleMatch) {
-          amount = Math.round(parseFloat(trSimpleMatch[1].replace(',', '.')) * 1000000);
-        } else if (kMatch) {
-          amount = Math.round(parseFloat(kMatch[1].replace(',', '.')) * 1000);
-        } else if (rawMatch) {
-          amount = parseInt(rawMatch[0], 10);
-        }
+        const amount = ZaloBotHandler.extractAmount(lowerText);
 
         if (amount && amount > 0) {
           const categories = await DatabaseService.getCategories();
@@ -463,11 +447,13 @@ export class ZaloBotHandler {
     }
 
     // =========================================================================
-    // TẦNG 2.5: LIÊN KẾT BỔ SUNG MẶT HÀNG CHO ẢNH GẦN NHẤT (NẾU KHÔNG CÓ PENDING)
+    // TẦNG 2.5: LIÊN KẾT BỔ SUNG MẶT HÀNG (KHI NGƯỜI DÙNG CHỈ NHẮN TÊN MẶT HÀNG KHÔNG CÓ TIỀN)
     // =========================================================================
     if (!photoUrl && userText) {
-      const matchedCat = await DatabaseService.matchCategoryByName(userText);
-      if (matchedCat && matchedCat.name !== 'Khác') {
+      const extractedAmt = ZaloBotHandler.extractAmount(userText);
+      if (!extractedAmt) {
+        const matchedCat = await DatabaseService.matchCategoryByName(userText);
+        if (matchedCat && matchedCat.name !== 'Khác') {
         const latest = await DatabaseService.getLatestTransaction(user.id);
         const isRecent =
           latest &&
@@ -516,6 +502,7 @@ export class ZaloBotHandler {
         }
       }
     }
+  }
 
     // =========================================================================
     // TẦNG 3: MULTIMODAL LLM (GEMINI FLASH) CHO ẢNH HOẶC TEXT PHỨC TẠP
@@ -676,6 +663,54 @@ export class ZaloBotHandler {
   }
 
   /**
+   * Trích xuất số tiền linh hoạt và chuẩn xác từ văn bản tiếng Việt
+   */
+  public static extractAmount(text: string): number | null {
+    if (!text) return null;
+    const lower = text.toLowerCase();
+
+    // 1. Dạng triệu phức: 1tr2, 1tr200, 1 triệu 200
+    const trComplex = lower.match(/(\d+)\s*(?:tr|triệu)\s*(\d+)/i);
+    if (trComplex) {
+      const main = parseInt(trComplex[1], 10) * 1000000;
+      const subDigits = trComplex[2];
+      const sub = parseInt(subDigits.padEnd(6, '0').slice(0, 6), 10);
+      return main + sub;
+    }
+
+    // 2. Dạng triệu đơn: 1.5tr, 2 triệu, 1.2tr
+    const trSimple = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:tr|triệu)\b/i);
+    if (trSimple) {
+      const val = parseFloat(trSimple[1].replace(',', '.'));
+      return Math.round(val * 1000000);
+    }
+
+    // 3. Dạng nghìn/k: 50k, 115k, 299 nghìn, 50.5k
+    const kMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:k|nghìn|ngàn)\b/i);
+    if (kMatch) {
+      const val = parseFloat(kMatch[1].replace(',', '.'));
+      return Math.round(val * 1000);
+    }
+
+    // 4. Dạng số có dấu chấm/phẩy phân cách ngàn: 50.000, 115.000, 1.200.000 hoặc 50,000
+    const dottedMatch = lower.match(/\b(\d{1,3}(?:[.,]\d{3})+)(?:\s*(?:đ|vnd|dong))?\b/i);
+    if (dottedMatch) {
+      const rawDigits = dottedMatch[1].replace(/[.,]/g, '');
+      const val = parseInt(rawDigits, 10);
+      if (val > 0) return val;
+    }
+
+    // 5. Dạng số liền: +50000, 50000, 115000
+    const pureNumMatch = lower.match(/(?:^|\D)(\d{4,9})(?:\s*(?:đ|vnd|dong))?(?:\D|$)/i);
+    if (pureNumMatch) {
+      const val = parseInt(pureNumMatch[1], 10);
+      if (val > 0) return val;
+    }
+
+    return null;
+  }
+
+  /**
    * Bộ phân tích nhanh cục bộ (Tier 1.5) - Tốc độ siêu tốc < 10ms, 0 Token LLM
    */
   private static parseQuickInput(text: string): {
@@ -703,40 +738,20 @@ export class ZaloBotHandler {
       type = 'INCOME';
     }
 
-    // 2. Trích xuất số tiền (hỗ trợ: 115k, 115 nghìn, 115 ngàn, 1.2tr, 1tr2, 299000, 299.000)
-    let amount: number | null = null;
-    const trComplexMatch = lower.match(/(\d+)\s*(?:tr|triệu)\s*(\d+)/);
-    const trSimpleMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:tr|triệu)/);
-    const kMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:k|nghìn|ngàn)/);
-    const rawNumMatch = lower.replace(/[,.\s]/g, '').match(/\b(\d{4,9})\b/);
-
-    if (trComplexMatch) {
-      const main = parseInt(trComplexMatch[1], 10) * 1000000;
-      const subDigits = trComplexMatch[2];
-      const sub = parseInt(subDigits.padEnd(6, '0').slice(0, 6), 10);
-      amount = main + sub;
-    } else if (trSimpleMatch) {
-      const val = parseFloat(trSimpleMatch[1].replace(',', '.'));
-      amount = Math.round(val * 1000000);
-    } else if (kMatch) {
-      const val = parseFloat(kMatch[1].replace(',', '.'));
-      amount = Math.round(val * 1000);
-    } else if (rawNumMatch) {
-      amount = parseInt(rawNumMatch[1], 10);
-    }
-
+    // 2. Trích xuất số tiền linh hoạt
+    const amount = this.extractAmount(lower);
     if (!amount || amount <= 0) return null;
 
-    // 3. Khớp danh mục theo 8 danh mục người dùng yêu cầu
+    // 3. Khớp danh mục theo 8 danh mục người dùng yêu cầu (hỗ trợ cả kiểu gõ dấu mới và cũ)
     const categoriesMap = [
-      { name: 'Thư hoa', keywords: ['thư hoa', 'thu hoa'] },
+      { name: 'Thư hoa', keywords: ['thư hoa', 'thu hoa', 'bức thư hoa', 'bức thư'] },
       { name: 'Huy chương', keywords: ['huy chương', 'huy chuong', 'hc'] },
-      { name: 'Tủ hoa', keywords: ['tủ hoa', 'tu hoa'] },
+      { name: 'Tủ hoa', keywords: ['tủ hoa', 'tu hoa', 'tủ kính', 'tủ'] },
       { name: 'Thiệp lẻ', keywords: ['thiệp lẻ', 'thiep le', 'thiệp', 'thiep'] },
-      { name: 'Khung ảnh', keywords: ['khung ảnh', 'khung anh', 'khung hình', 'khung hinh'] },
-      { name: 'Cúp hoa', keywords: ['cúp hoa', 'cup hoa'] },
-      { name: 'Móc khóa', keywords: ['móc khóa', 'moc khoa'] },
-      { name: 'Khác', keywords: ['khác', 'khac'] },
+      { name: 'Khung ảnh', keywords: ['khung ảnh', 'khung anh', 'khung hình', 'khung hinh', 'khung'] },
+      { name: 'Cúp hoa', keywords: ['cúp hoa', 'cup hoa', 'cúp', 'cup'] },
+      { name: 'Móc khóa', keywords: ['móc khóa', 'móc khoá', 'moc khoa', 'khoá', 'khóa'] },
+      { name: 'Khác', keywords: ['khác', 'khac', 'chi phí', 'tiền ship', 'ship'] },
     ];
 
     let matchedCategory: string | null = null;
