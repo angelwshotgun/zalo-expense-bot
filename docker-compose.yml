@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  zalo-expense-bot:
+    build: .
+    container_name: zalo_expense_bot
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
