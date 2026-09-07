@@ -98,45 +98,61 @@ export class DatabaseService {
   /**
    * Khớp danh mục theo tên hoặc từ khóa (fuzzy match cơ bản trong Node, không tốn LLM)
    */
-  static async matchCategoryByName(categoryName: string): Promise<Category | null> {
+  static async matchCategoryByName(categoryName: string, preferredType?: 'INCOME' | 'EXPENSE'): Promise<Category | null> {
     if (!categoryName) return null;
     const categories = await this.getCategories();
     const normalized = categoryName.trim().toLowerCase();
 
-    // 1. Khớp theo số thứ tự từ 1 đến 8 (theo thứ tự hiển thị chuẩn)
-    const indexOrder = [
-      'Thư hoa',
-      'Huy chương',
-      'Tủ hoa',
-      'Thiệp lẻ',
-      'Khung ảnh',
-      'Cúp hoa',
-      'Móc khóa',
-      'Khác',
-    ];
-
-    const numMatch = normalized.match(/^[#\s]*([1-8])\s*$/);
-    if (numMatch) {
-      const idx = parseInt(numMatch[1], 10) - 1;
-      const targetName = indexOrder[idx];
-      const found = categories.find((c) => c.name.toLowerCase() === targetName.toLowerCase());
-      if (found) return found;
+    // 1. Khớp theo số thứ tự (khi người dùng chọn 1, 2, 3...)
+    if (preferredType === 'EXPENSE') {
+      const expenseOrder = ['Nguyên vật liệu', 'Ship bưu cục', 'Ship hoả tốc', 'Khác'];
+      const numMatch = normalized.match(/^[#\s]*([1-4])\s*$/);
+      if (numMatch) {
+        const idx = parseInt(numMatch[1], 10) - 1;
+        const targetName = expenseOrder[idx];
+        const found = categories.find((c) => c.name.toLowerCase() === targetName.toLowerCase());
+        if (found) return found;
+      }
+    } else {
+      const incomeOrder = [
+        'Thư hoa',
+        'Huy chương',
+        'Tủ hoa',
+        'Thiệp lẻ',
+        'Khung ảnh',
+        'Cúp hoa',
+        'Móc khóa',
+        'Khác',
+      ];
+      const numMatch = normalized.match(/^[#\s]*([1-8])\s*$/);
+      if (numMatch) {
+        const idx = parseInt(numMatch[1], 10) - 1;
+        const targetName = incomeOrder[idx];
+        const found = categories.find((c) => c.name.toLowerCase() === targetName.toLowerCase());
+        if (found) return found;
+      }
     }
 
     // 2. Khớp chính xác tên
     const exact = categories.find((c) => c.name.toLowerCase() === normalized);
     if (exact) return exact;
 
-    // 3. Khớp theo từ khóa sản phẩm thực tế
+    // 3. Khớp theo từ khóa sản phẩm thực tế (cả Thu và Chi)
     const keywordMap: Array<{ name: string; keywords: string[] }> = [
-      { name: 'Thư hoa', keywords: ['thư hoa', 'thu hoa', 'bức thư hoa', 'bức thư', 'thu'] },
+      // THU (Bán hàng)
+      { name: 'Thư hoa', keywords: ['thư hoa', 'thu hoa', 'bức thư hoa', 'bức thư'] },
       { name: 'Huy chương', keywords: ['huy chương', 'huy chuong', 'hc'] },
-      { name: 'Tủ hoa', keywords: ['tủ hoa', 'tu hoa', 'tủ kính', 'tủ', 'tu'] },
+      { name: 'Tủ hoa', keywords: ['tủ hoa', 'tu hoa', 'tủ kính', 'tủ'] },
       { name: 'Thiệp lẻ', keywords: ['thiệp lẻ', 'thiep le', 'thiệp', 'thiep'] },
       { name: 'Khung ảnh', keywords: ['khung ảnh', 'khung anh', 'khung hình', 'khung hinh', 'khung'] },
       { name: 'Cúp hoa', keywords: ['cúp hoa', 'cup hoa', 'cúp', 'cup'] },
-      { name: 'Móc khóa', keywords: ['móc khóa', 'moc khoa', 'móc khoá', 'khoá', 'khóa'] },
-      { name: 'Khác', keywords: ['khác', 'khac', 'chi phí', 'chi tieu', 'tiền ship', 'vật liệu', 'mua đồ'] },
+      { name: 'Móc khóa', keywords: ['móc khóa', 'móc khoá', 'moc khoa', 'khoá', 'khóa'] },
+
+      // CHI (Chi phí hoạt động)
+      { name: 'Nguyên vật liệu', keywords: ['nguyên vật liệu', 'nguyen vat lieu', 'vật liệu', 'vat lieu', 'nguyên liệu', 'nguyen lieu', 'phụ liệu', 'phu lieu', 'mua đồ', 'mua do', 'mua hoa', 'hoa sáp', 'giấy gói', 'ruy băng', 'hộp hoa', 'keo nến', 'nvl'] },
+      { name: 'Ship bưu cục', keywords: ['ship bưu cục', 'ship buu cuc', 'bưu cục', 'buu cuc', 'gửi hàng', 'gui hang', 'viettel post', 'vnpost', 'ghtk', 'giao hàng tiết kiệm', 'bưu điện', 'buu dien', 'ship thường', 'chuyển phát'] },
+      { name: 'Ship hoả tốc', keywords: ['ship hoả tốc', 'ship hỏa tốc', 'ship hoa toc', 'hoả tốc', 'hỏa tốc', 'hoa toc', 'grab', 'ahamove', 'giao gấp', 'ship gấp', 'lalamove', 'be delivery'] },
+      { name: 'Khác', keywords: ['khác', 'khac', 'chi phí khác', 'chi khác', 'khoản khác'] },
     ];
 
     for (const item of keywordMap) {
@@ -412,7 +428,7 @@ export class DatabaseService {
     let incomeCount = 0;
     let expenseCount = 0;
 
-    const map = new Map<number, CategorySummaryItem>();
+    const map = new Map<string, CategorySummaryItem>();
 
     for (const tx of txs || []) {
       const amount = Number(tx.amount) || 0;
@@ -427,17 +443,18 @@ export class DatabaseService {
         expenseCount++;
       }
 
-      const current = map.get(cat.id) || {
+      const key = `${cat.id}_${type}`;
+      const current = map.get(key) || {
         category_id: cat.id,
         category_name: cat.name,
-        category_icon: cat.icon || '📦',
+        category_icon: cat.icon || (type === 'INCOME' ? '🌸' : '💸'),
         type,
         total_amount: 0,
         transaction_count: 0,
       };
       current.total_amount += amount;
       current.transaction_count++;
-      map.set(cat.id, current);
+      map.set(key, current);
     }
 
     return {

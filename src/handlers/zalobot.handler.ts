@@ -122,41 +122,61 @@ export class ZaloBotHandler {
     }
 
     // =========================================================================
-    // TẦNG 1: LỆNH TẮT CỐ ĐỊNH (0 TOKEN LLM)
+    // TẦNG 1: LỆNH TẮT CỐ ĐỊNH & BÁO CÁO THỐNG KÊ (0 TOKEN LLM, PHẢN HỒI TỨC THÌ)
     // =========================================================================
-    const lowerText = userText.toLowerCase();
+    const lowerText = userText.toLowerCase().trim();
 
-    if (lowerText === '#baocao' || lowerText === '#homnay' || lowerText === 'báo cáo' || lowerText.includes('báo cáo hôm nay')) {
-      console.log(`⚡ [Zalo Bot - Tier 1] Báo cáo hôm nay cho user: ${user.id} (0 TOKEN)`);
-      const report = await DatabaseService.getDailyExpenseReport(user.id);
-      const reportText = ZaloBotService.buildReportText(report);
-      await ZaloBotService.sendMessage(chatId, reportText);
-      return;
-    }
+    const isReportCommand =
+      lowerText.startsWith('#baocao') ||
+      lowerText.startsWith('báo cáo') ||
+      lowerText.startsWith('baocao') ||
+      lowerText === '#homnay' ||
+      lowerText === '#thangnay' ||
+      lowerText === 'thống kê' ||
+      lowerText === 'tổng kết';
 
-    if (lowerText === '#thangnay' || lowerText.includes('báo cáo tháng')) {
-      console.log(`⚡ [Zalo Bot - Tier 1] Báo cáo tháng cho user: ${user.id} (0 TOKEN)`);
-      const report = await DatabaseService.getMonthlyExpenseReport(user.id);
-      const reportText = ZaloBotService.buildReportText(report);
+    if (isReportCommand) {
+      console.log(`⚡ [Zalo Bot - Tier 1] Báo cáo: "${lowerText}" cho user: ${user.id}`);
+      const isMonthly =
+        lowerText.includes('thang') ||
+        lowerText.includes('tháng') ||
+        lowerText === '#thangnay';
+
+      let filterType: 'ALL' | 'INCOME' | 'EXPENSE' = 'ALL';
+      if (lowerText.includes('thu') || lowerText.includes('doanh thu') || lowerText.includes('bán')) {
+        filterType = 'INCOME';
+      } else if (lowerText.includes('chi') || lowerText.includes('chi phí') || lowerText.includes('phi')) {
+        filterType = 'EXPENSE';
+      }
+
+      const report = isMonthly
+        ? await DatabaseService.getMonthlyExpenseReport(user.id)
+        : await DatabaseService.getDailyExpenseReport(user.id);
+
+      const reportText = ZaloBotService.buildReportText(report, filterType);
       await ZaloBotService.sendMessage(chatId, reportText);
       return;
     }
 
     if (lowerText === '#help' || lowerText === '#trogiup' || lowerText === 'trợ giúp') {
       const helpText =
-        `👋 **CHÀO BẠN! BOT QUẢN LÝ DOANH THU & CHI TIÊU**\n` +
+        `👋 **CHÀO BẠN! BOT QUẢN LÝ THU & CHI TIÊU**\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
-        `💡 **Danh mục sản phẩm:**\n` +
-        `🌸 Thư hoa | 🏅 Huy chương | 🪻 Tủ hoa\n` +
-        `✉️ Thiệp lẻ | 🖼️ Khung ảnh | 🏆 Cúp hoa\n` +
-        `🔑 Móc khóa | 📦 Khác\n\n` +
-        `⚡ **Nhập nhanh (Phản hồi tức thì < 0.2s):**\n` +
-        `• Bán hàng: "Thư hoa +115k", "Tủ hoa 299k", "Móc khóa 35k"\n` +
-        `• Chi tiêu: "Chi 50k mua giấy", "-30k tiền ship"\n` +
-        `• Gửi ảnh: Bill chuyển khoản, hóa đơn\n\n` +
+        `🌸 **Danh mục THU (Bán hàng):**\n` +
+        `Thư hoa | Huy chương | Tủ hoa | Thiệp lẻ\n` +
+        `Khung ảnh | Cúp hoa | Móc khóa | Khác\n\n` +
+        `💸 **Danh mục CHI (Chi phí):**\n` +
+        `🧱 Nguyên vật liệu | 📮 Ship bưu cục\n` +
+        `⚡ Ship hoả tốc | 📦 Khác\n\n` +
+        `⚡ **Ghi chép nhanh (< 0.1s):**\n` +
+        `• Bán hàng: "Tủ hoa 299k", "Móc khóa 50k", "+115k thư hoa"\n` +
+        `• Chi phí: "Nguyên vật liệu 500k", "Ship bưu cục 30k", "Ship hoả tốc 45k", "-200k tiền điện"\n` +
+        `• Gửi ảnh: Chụp hoặc gửi ảnh biên lai/chuyển khoản\n\n` +
         `📊 **Báo cáo thống kê:**\n` +
-        `• **#baocao** : Xem tổng kết hôm nay\n` +
-        `• **#thangnay** : Xem tổng kết tháng này`;
+        `• **#baocao** : Xem tổng hợp thu & chi hôm nay\n` +
+        `• **#baocaothu** : Xem riêng doanh thu bán hàng\n` +
+        `• **#baocaochi** : Xem riêng các khoản chi phí\n` +
+        `• Thêm **thangnay** để xem theo tháng (VD: **#baocao thangnay**, **#baocaothu thangnay**)`;
       await ZaloBotService.sendMessage(chatId, helpText);
       return;
     }
@@ -399,13 +419,14 @@ export class ZaloBotHandler {
 
       // Trường hợp 1: Đang thiếu mặt hàng / category (Người dùng vừa gửi ảnh hoặc số tiền trước đó)
       if (pending.missing_field === 'category') {
-        const matchedCat = await DatabaseService.matchCategoryByName(userText);
+        const preferredType = pending.partial_transaction.transaction_type;
+        const matchedCat = await DatabaseService.matchCategoryByName(userText, preferredType);
         if (matchedCat) {
           const tx = await DatabaseService.createTransaction({
             user_id: user.id,
             amount: pending.partial_transaction.amount || 0,
             category_id: matchedCat.id,
-            transaction_type: pending.partial_transaction.transaction_type || 'INCOME',
+            transaction_type: matchedCat.type || pending.partial_transaction.transaction_type || 'INCOME',
             description: pending.partial_transaction.description || userText || matchedCat.name,
             raw_input: `${pending.partial_transaction.raw_input || ''} + ${userText}`,
             image_url: pending.partial_transaction.image_url,
@@ -419,7 +440,7 @@ export class ZaloBotHandler {
         }
       }
 
-      // Trường hợp 2: Đang thiếu số tiền / amount (Người dùng nhắn tên mặt hàng trước đó)
+      // Trường hợp 2: Đang thiếu số tiền / amount (Người dùng nhắn tên mặt hàng/khoản chi trước đó)
       if (pending.missing_field === 'amount') {
         const amount = ZaloBotHandler.extractAmount(lowerText);
 
@@ -431,7 +452,7 @@ export class ZaloBotHandler {
             user_id: user.id,
             amount,
             category_id: cat?.id,
-            transaction_type: pending.partial_transaction.transaction_type || 'INCOME',
+            transaction_type: pending.partial_transaction.transaction_type || cat?.type || 'INCOME',
             description: pending.partial_transaction.description || userText,
             raw_input: `${pending.partial_transaction.raw_input || ''} + ${userText}`,
             image_url: pending.partial_transaction.image_url,
@@ -447,62 +468,64 @@ export class ZaloBotHandler {
     }
 
     // =========================================================================
-    // TẦNG 2.5: LIÊN KẾT BỔ SUNG MẶT HÀNG (KHI NGƯỜI DÙNG CHỈ NHẮN TÊN MẶT HÀNG KHÔNG CÓ TIỀN)
+    // TẦNG 2.5: LIÊN KẾT BỔ SUNG (KHI NGƯỜI DÙNG CHỈ NHẮN TÊN DANH MỤC KHÔNG CÓ TIỀN)
     // =========================================================================
     if (!photoUrl && userText) {
       const extractedAmt = ZaloBotHandler.extractAmount(userText);
       if (!extractedAmt) {
         const matchedCat = await DatabaseService.matchCategoryByName(userText);
         if (matchedCat && matchedCat.name !== 'Khác') {
-        const latest = await DatabaseService.getLatestTransaction(user.id);
-        const isRecent =
-          latest &&
-          Date.now() - new Date(latest.created_at || latest.transaction_date).getTime() < 10 * 60 * 1000;
+          const catType = matchedCat.type || 'INCOME';
+          const typeLabel = catType === 'INCOME' ? 'mặt hàng' : 'khoản chi';
+          const latest = await DatabaseService.getLatestTransaction(user.id);
+          const isRecent =
+            latest &&
+            Date.now() - new Date(latest.created_at || latest.transaction_date).getTime() < 10 * 60 * 1000;
 
-        // Nếu giao dịch gần nhất trong 10 phút là từ ảnh hoặc có category là Khác
-        if (isRecent && (latest.image_url || latest.category?.name === 'Khác')) {
-          const updated = await DatabaseService.updateLatestTransaction(user.id, {
-            category_id: matchedCat.id,
-            description: userText,
-          });
-          if (updated) {
-            await DatabaseService.clearPendingClarification(user.id);
+          // Nếu giao dịch gần nhất trong 10 phút là từ ảnh hoặc có category là Khác
+          if (isRecent && (latest.image_url || latest.category?.name === 'Khác')) {
+            const updated = await DatabaseService.updateLatestTransaction(user.id, {
+              category_id: matchedCat.id,
+              description: userText,
+            });
+            if (updated) {
+              await DatabaseService.clearPendingClarification(user.id);
+              await ZaloBotService.sendMessage(
+                chatId,
+                `✅ **ĐÃ LIÊN KẾT BỔ SUNG ${typeLabel.toUpperCase()}!**\n\n` +
+                `🏷️ **${catType === 'INCOME' ? 'Mặt hàng' : 'Mục chi'}:** ${matchedCat.icon} **${matchedCat.name}**\n` +
+                `💵 **Số tiền:** **${ZaloBotService.formatCurrency(updated.amount)}**\n` +
+                `📝 **Nội dung:** ${userText}\n\n` +
+                `━━━━━━━━━━━━━━━━━━\n` +
+                `💡 _Gõ **#baocao** để xem lại tổng kết._`
+              );
+              return;
+            }
+          } else {
+            // Người dùng chỉ gõ tên danh mục mà chưa có số tiền và chưa có giao dịch ảnh trước đó
+            await DatabaseService.savePendingClarification(
+              user.id,
+              {
+                category_id: matchedCat.id,
+                category_name: matchedCat.name,
+                transaction_type: catType,
+                description: userText,
+                raw_input: userText,
+              },
+              'amount',
+              15
+            );
+
             await ZaloBotService.sendMessage(
               chatId,
-              `✅ **ĐÃ LIÊN KẾT BỔ SUNG MẶT HÀNG!**\n\n` +
-              `🏷️ **Mặt hàng:** ${matchedCat.icon} **${matchedCat.name}**\n` +
-              `💵 **Số tiền:** **${ZaloBotService.formatCurrency(updated.amount)}**\n` +
-              `📝 **Nội dung:** ${userText}\n\n` +
-              `━━━━━━━━━━━━━━━━━━\n` +
-              `💡 _Gõ **#baocao** để xem lại tổng kết._`
+              `${matchedCat.icon} Đã nhận ${typeLabel}: **${matchedCat.name}**!\n` +
+              `👉 Bạn cho mình xin số tiền nhé (ví dụ: **115k**, **299k**, **35k**):`
             );
             return;
           }
-        } else {
-          // Người dùng chỉ gõ tên sản phẩm mà chưa có số tiền và chưa có giao dịch ảnh trước đó
-          await DatabaseService.savePendingClarification(
-            user.id,
-            {
-              category_id: matchedCat.id,
-              category_name: matchedCat.name,
-              transaction_type: 'INCOME',
-              description: userText,
-              raw_input: userText,
-            },
-            'amount',
-            15
-          );
-
-          await ZaloBotService.sendMessage(
-            chatId,
-            `${matchedCat.icon} Đã nhận mặt hàng: **${matchedCat.name}**!\n` +
-            `👉 Bạn cho mình xin số tiền của đơn này nhé (ví dụ: **115k**, **299k**):`
-          );
-          return;
         }
       }
     }
-  }
 
     // =========================================================================
     // TẦNG 3: MULTIMODAL LLM (GEMINI FLASH) CHO ẢNH HOẶC TEXT PHỨC TẠP
@@ -630,21 +653,27 @@ export class ZaloBotHandler {
 
         const categories = await DatabaseService.getCategories();
         const question = extraction.clarification.question || 'Bạn vui lòng bổ sung thông tin:';
-        const clarText = ZaloBotService.buildClarificationText(question, missingField, categories);
+        const clarText = ZaloBotService.buildClarificationText(
+          question,
+          missingField,
+          categories,
+          extraction.transaction.type || 'INCOME'
+        );
         await ZaloBotService.sendMessage(chatId, clarText);
         return;
       }
 
       if (extraction.status === 'SUCCESS' && extraction.transaction.amount) {
         const matchedCategory = await DatabaseService.matchCategoryByName(
-          extraction.transaction.category_name || 'Khác'
+          extraction.transaction.category_name || 'Khác',
+          extraction.transaction.type
         );
 
         const tx = await DatabaseService.createTransaction({
           user_id: user.id,
           amount: extraction.transaction.amount,
           category_id: matchedCategory?.id,
-          transaction_type: extraction.transaction.type || 'EXPENSE',
+          transaction_type: extraction.transaction.type || matchedCategory?.type || 'EXPENSE',
           description: extraction.transaction.description || userText || matchedCategory?.name,
           raw_input: userText || '[Ảnh hóa đơn/chuyển khoản]',
           image_url: photoUrl,
@@ -723,42 +752,51 @@ export class ZaloBotHandler {
     const raw = text.trim();
     const lower = raw.toLowerCase();
 
-    // 1. Phân loại Thu / Chi
-    let type: 'INCOME' | 'EXPENSE' = 'INCOME';
+    // 1. Phân loại Thu / Chi sơ bộ từ tiền tố hoặc từ khóa
+    let explicitType: 'INCOME' | 'EXPENSE' | null = null;
     if (
       lower.startsWith('-') ||
       lower.includes('chi ') ||
       lower.includes('tiêu ') ||
       lower.includes('mua ') ||
-      lower.includes('trả ') ||
-      lower.includes('ship ')
+      lower.includes('trả ')
     ) {
-      type = 'EXPENSE';
-    } else if (lower.startsWith('+')) {
-      type = 'INCOME';
+      explicitType = 'EXPENSE';
+    } else if (lower.startsWith('+') || lower.includes('thu ') || lower.includes('bán ')) {
+      explicitType = 'INCOME';
     }
 
     // 2. Trích xuất số tiền linh hoạt
     const amount = this.extractAmount(lower);
     if (!amount || amount <= 0) return null;
 
-    // 3. Khớp danh mục theo 8 danh mục người dùng yêu cầu (hỗ trợ cả kiểu gõ dấu mới và cũ)
-    const categoriesMap = [
-      { name: 'Thư hoa', keywords: ['thư hoa', 'thu hoa', 'bức thư hoa', 'bức thư'] },
-      { name: 'Huy chương', keywords: ['huy chương', 'huy chuong', 'hc'] },
-      { name: 'Tủ hoa', keywords: ['tủ hoa', 'tu hoa', 'tủ kính', 'tủ'] },
-      { name: 'Thiệp lẻ', keywords: ['thiệp lẻ', 'thiep le', 'thiệp', 'thiep'] },
-      { name: 'Khung ảnh', keywords: ['khung ảnh', 'khung anh', 'khung hình', 'khung hinh', 'khung'] },
-      { name: 'Cúp hoa', keywords: ['cúp hoa', 'cup hoa', 'cúp', 'cup'] },
-      { name: 'Móc khóa', keywords: ['móc khóa', 'móc khoá', 'moc khoa', 'khoá', 'khóa'] },
-      { name: 'Khác', keywords: ['khác', 'khac', 'chi phí', 'tiền ship', 'ship'] },
+    // 3. Khớp danh mục theo danh mục THU (Bán hàng) & CHI (Chi phí)
+    const categoriesMap: Array<{
+      name: string;
+      defaultType: 'INCOME' | 'EXPENSE';
+      keywords: string[];
+    }> = [
+      // THU (Bán hàng)
+      { name: 'Thư hoa', defaultType: 'INCOME', keywords: ['thư hoa', 'thu hoa', 'bức thư hoa', 'bức thư'] },
+      { name: 'Huy chương', defaultType: 'INCOME', keywords: ['huy chương', 'huy chuong', 'hc'] },
+      { name: 'Tủ hoa', defaultType: 'INCOME', keywords: ['tủ hoa', 'tu hoa', 'tủ kính', 'tủ'] },
+      { name: 'Thiệp lẻ', defaultType: 'INCOME', keywords: ['thiệp lẻ', 'thiep le', 'thiệp', 'thiep'] },
+      { name: 'Khung ảnh', defaultType: 'INCOME', keywords: ['khung ảnh', 'khung anh', 'khung hình', 'khung hinh', 'khung'] },
+      { name: 'Cúp hoa', defaultType: 'INCOME', keywords: ['cúp hoa', 'cup hoa', 'cúp', 'cup'] },
+      { name: 'Móc khóa', defaultType: 'INCOME', keywords: ['móc khóa', 'móc khoá', 'moc khoa', 'khoá', 'khóa'] },
+
+      // CHI (Chi phí vận hành)
+      { name: 'Nguyên vật liệu', defaultType: 'EXPENSE', keywords: ['nguyên vật liệu', 'nguyen vat lieu', 'vật liệu', 'vat lieu', 'nguyên liệu', 'nguyen lieu', 'phụ liệu', 'phu lieu', 'mua đồ', 'mua do', 'mua hoa', 'hoa sáp', 'giấy gói', 'ruy băng', 'hộp hoa', 'keo nến', 'nvl'] },
+      { name: 'Ship bưu cục', defaultType: 'EXPENSE', keywords: ['ship bưu cục', 'ship buu cuc', 'bưu cục', 'buu cuc', 'gửi hàng', 'gui hang', 'viettel post', 'vnpost', 'ghtk', 'giao hàng tiết kiệm', 'bưu điện', 'buu dien', 'ship thường', 'chuyển phát'] },
+      { name: 'Ship hoả tốc', defaultType: 'EXPENSE', keywords: ['ship hoả tốc', 'ship hỏa tốc', 'ship hoa toc', 'hoả tốc', 'hỏa tốc', 'hoa toc', 'grab', 'ahamove', 'giao gấp', 'ship gấp', 'lalamove', 'be delivery'] },
+      { name: 'Khác', defaultType: 'EXPENSE', keywords: ['khác', 'khac', 'chi phí', 'chi tieu', 'tiền ship'] },
     ];
 
-    let matchedCategory: string | null = null;
+    let matchedCategory: (typeof categoriesMap)[0] | null = null;
     for (const cat of categoriesMap) {
       for (const kw of cat.keywords) {
         if (lower.includes(kw)) {
-          matchedCategory = cat.name;
+          matchedCategory = cat;
           break;
         }
       }
@@ -766,18 +804,20 @@ export class ZaloBotHandler {
     }
 
     // Nếu không có tên danh mục trong các mặt hàng, nhưng là khoản chi rõ ràng -> 'Khác'
-    if (!matchedCategory && type === 'EXPENSE') {
-      matchedCategory = 'Khác';
+    if (!matchedCategory && explicitType === 'EXPENSE') {
+      matchedCategory = categoriesMap.find((c) => c.name === 'Khác') || null;
     }
 
     if (!matchedCategory) {
       return null;
     }
 
+    const finalType = explicitType || matchedCategory.defaultType;
+
     return {
       amount,
-      category_name: matchedCategory,
-      transaction_type: type,
+      category_name: matchedCategory.name,
+      transaction_type: finalType,
       description: raw.replace(/^[+-]\s*/, '').trim(),
     };
   }

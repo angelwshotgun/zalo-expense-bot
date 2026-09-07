@@ -26,21 +26,26 @@ Quy tắc xử lý:
 
 3. Danh mục chuẩn (category_name):
    Chỉ chọn một trong các danh mục sau:
-   - 'Thư hoa'
-   - 'Huy chương'
-   - 'Tủ hoa'
-   - 'Thiệp lẻ'
-   - 'Khung ảnh'
-   - 'Cúp hoa'
-   - 'Móc khóa'
-   - 'Khác' (Dành cho các khoản chi tiêu khác, mua nguyên vật liệu, tiền ship, hoặc sản phẩm ngoài danh mục)
+   - Danh mục THU (Bán hàng):
+     + 'Thư hoa'
+     + 'Huy chương'
+     + 'Tủ hoa'
+     + 'Thiệp lẻ'
+     + 'Khung ảnh'
+     + 'Cúp hoa'
+     + 'Móc khóa'
+   - Danh mục CHI (Chi phí):
+     + 'Nguyên vật liệu' (mua hoa sáp, ruy băng, hộp, keo, đồ làm sản phẩm)
+     + 'Ship bưu cục' (tiền gửi bưu điện, VNPost, Viettel Post, GHTK, ship thường)
+     + 'Ship hoả tốc' (tiền ship Grab, Ahamove, Be, Lalamove, giao hàng hỏa tốc trong ngày)
+     + 'Khác' (khoản chi tiêu khác, ăn uống, sinh hoạt hoặc sản phẩm ngoài danh mục)
 
 4. Phân loại trạng thái (status):
-   - 'SUCCESS': Khi có ĐỦ số tiền (amount) và tên sản phẩm/mục đích rõ ràng (Ví dụ: "Thư hoa +115k", "Tủ hoa 299k", "Móc khóa 30k", hoặc ảnh chuyển khoản có ghi rõ tên sản phẩm trong 7 danh mục).
+   - 'SUCCESS': Khi có ĐỦ số tiền (amount) và tên sản phẩm/danh mục chi rõ ràng.
    - 'NEED_CLARIFICATION':
-     + Ảnh biên lai/chuyển khoản ngân hàng đọc được số tiền nhưng CHƯA rõ tên sản phẩm (Ví dụ: nội dung chỉ ghi chuyển tiền chung chung, tên người nhận) -> BẮT BUỘC đặt status = 'NEED_CLARIFICATION', missing_field = 'category', giữ nguyên số tiền vào transaction.amount.
-     + Tin nhắn có số tiền nhưng KHÔNG rõ sản phẩm (Ví dụ: "+200k", "Vừa nhận 500k") -> missing_field = 'category'.
-     + Có tên sản phẩm nhưng KHÔNG có số tiền (Ví dụ: "tiền tủ hoa", "vừa bán thư hoa", "làm tủ hoa") -> missing_field = 'amount', giữ nguyên category_name.
+     + Ảnh biên lai/chuyển khoản ngân hàng đọc được số tiền nhưng CHƯA rõ tên sản phẩm/mục đích -> BẮT BUỘC đặt status = 'NEED_CLARIFICATION', missing_field = 'category', giữ nguyên số tiền vào transaction.amount.
+     + Tin nhắn có số tiền nhưng KHÔNG rõ sản phẩm/mục đích chi -> missing_field = 'category'.
+     + Có tên danh mục nhưng KHÔNG có số tiền -> missing_field = 'amount', giữ nguyên category_name.
    - 'IRRELEVANT': Tin nhắn chào hỏi ("alo", "chào bot", "test") hoặc ảnh hoàn toàn không liên quan đến tiền bạc/thanh toán.
 
 Tuyệt đối chỉ trả về JSON hợp lệ theo đúng schema được định nghĩa.`;
