@@ -66,7 +66,7 @@ export class ZaloBotService {
   /**
    * Định dạng thẻ tin nhắn thành công
    */
-  static buildSuccessText(tx: Transaction, categoryName = 'Ghi chép'): string {
+  static buildSuccessText(tx: Transaction, categoryName = 'Ghi chép', authorName?: string): string {
     const icon = tx.category?.icon || (tx.transaction_type === 'INCOME' ? '🌸' : '💸');
     const typeLabel = tx.transaction_type === 'INCOME' ? 'Thu nhập / Bán hàng' : 'Khoản chi';
     const catLabel = tx.transaction_type === 'INCOME' ? 'Mặt hàng' : 'Mục chi';
@@ -85,6 +85,7 @@ export class ZaloBotService {
       `📌 **Loại:** ${typeLabel}\n` +
       `💵 **Số tiền:** **${amountStr}**\n` +
       `🏷️ **${catLabel}:** ${icon} **${tx.category?.name || categoryName}**\n` +
+      (authorName ? `👤 **Người ghi:** ${authorName}\n` : '') +
       (tx.description ? `📝 **Nội dung:** ${tx.description}\n` : '') +
       `🕒 **Thời gian:** ${dateStr}\n\n` +
       `━━━━━━━━━━━━━━━━━━\n` +
