@@ -51,6 +51,8 @@ export const env = parsed.success
       ZALO_APP_ID: process.env.ZALO_APP_ID || '',
       ZALO_OA_SECRET_KEY: process.env.ZALO_OA_SECRET_KEY || '',
       ZALO_OA_ACCESS_TOKEN: process.env.ZALO_OA_ACCESS_TOKEN || '',
+      ZALO_BOT_TOKEN: process.env.ZALO_BOT_TOKEN || '4012836441347575506:noMyFZmAkVsFcOzGLLHfhZFJQIzJbIuxAYEUZkBqOmdyFggRhYYiYCGRtVlEgToH',
+      ZALO_BOT_SECRET_TOKEN: process.env.ZALO_BOT_SECRET_TOKEN || 'zalo_bot_secret_token_12345678',
       SUPABASE_URL: process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder_service_role_key',
       LLM_PROVIDER: (process.env.LLM_PROVIDER as 'gemini' | 'openai') || 'gemini',
