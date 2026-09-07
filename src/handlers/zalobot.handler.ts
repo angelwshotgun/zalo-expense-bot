@@ -112,10 +112,19 @@ export class ZaloBotHandler {
       photoUrl = anyMsg.attachments[0]?.payload?.url || anyMsg.attachments[0]?.url;
     }
 
-    console.log(`\n🤖 [Zalo Bot: ${result.event_name}] Từ: ${senderName} (${senderId}) - Chat: ${chatId}${photoUrl ? ' [KÈM ẢNH]' : ''}`);
+    // Xác định chat riêng hay chat nhóm
+    const anyChat = msg.chat as any;
+    const isGroup = anyChat?.chat_type === '2' || anyChat?.chat_type === 2 || String(chatId) !== String(senderId);
 
-    // Lấy hoặc tạo user trong Supabase
-    const user = await DatabaseService.getOrCreateUser(senderId, senderName);
+    // Nếu là nhóm chat: sử dụng ID nhóm làm sổ thu chi chung (Group Shared Ledger) cho cả shop
+    // Nếu là chat riêng 1-1: sử dụng ID cá nhân người gửi
+    const targetZaloId = isGroup ? `group_${chatId}` : senderId;
+    const targetName = isGroup ? (anyChat?.title || anyChat?.name || `Nhóm Shop (${chatId})`) : senderName;
+
+    console.log(`\n🤖 [Zalo Bot: ${result.event_name}] Từ: ${senderName} (${senderId}) - Chat: ${chatId} (${isGroup ? 'NHÓM CHUNG' : 'CHAT RIÊNG'})${photoUrl ? ' [KÈM ẢNH]' : ''}`);
+
+    // Lấy hoặc tạo tài khoản sổ trong Supabase
+    const user = await DatabaseService.getOrCreateUser(targetZaloId, targetName);
 
     if (userText && !photoUrl) {
       userRecentTexts.set(user.id, { text: userText, timestamp: Date.now() });
@@ -254,6 +263,7 @@ export class ZaloBotHandler {
           `• **Loại:** ${typeStr}\n` +
           `• **Mặt hàng:** ${catIcon} **${catName}**\n` +
           `• **Số tiền:** **${amountStr}**\n` +
+          (isGroup ? `• **Thao tác bởi:** ${senderName}\n` : '') +
           (deleted.description ? `• **Nội dung:** ${deleted.description}\n` : '') +
           `\n━━━━━━━━━━━━━━━━━━\n` +
           `💡 _Giao dịch đã được xóa hoàn toàn. Gõ **#baocao** để kiểm tra lại._`
@@ -371,6 +381,7 @@ export class ZaloBotHandler {
             `📌 **Loại:** ${typeStr}\n` +
             `💵 **Số tiền:** **${amountStr}**\n` +
             `🏷️ **Mặt hàng:** ${catIcon} **${catName}**\n` +
+            (isGroup ? `👤 **Thao tác bởi:** ${senderName}\n` : '') +
             (updatedTx.description ? `📝 **Nội dung:** ${updatedTx.description}\n` : '') +
             `\n━━━━━━━━━━━━━━━━━━\n` +
             `💡 _Gõ **#baocao** để xem lại tổng kết sau khi sửa._`
@@ -504,7 +515,7 @@ export class ZaloBotHandler {
         });
 
         await DatabaseService.clearPendingClarification(user.id);
-        const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name);
+        const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name, isGroup ? senderName : undefined);
         await ZaloBotService.sendMessage(chatId, successMsg);
         return;
       }
@@ -535,7 +546,7 @@ export class ZaloBotHandler {
           });
 
           await DatabaseService.clearPendingClarification(user.id);
-          const successMsg = ZaloBotService.buildSuccessText(tx, matchedCat.name);
+          const successMsg = ZaloBotService.buildSuccessText(tx, matchedCat.name, isGroup ? senderName : undefined);
           await ZaloBotService.sendMessage(chatId, successMsg);
           return;
         }
@@ -561,7 +572,7 @@ export class ZaloBotHandler {
           });
 
           await DatabaseService.clearPendingClarification(user.id);
-          const successMsg = ZaloBotService.buildSuccessText(tx, cat?.name);
+          const successMsg = ZaloBotService.buildSuccessText(tx, cat?.name, isGroup ? senderName : undefined);
           await ZaloBotService.sendMessage(chatId, successMsg);
           return;
         }
@@ -782,7 +793,7 @@ export class ZaloBotHandler {
         });
 
         console.log(`✅ [Zalo Bot] Đã lưu giao dịch ${tx.id} (${tx.amount}đ) và gửi phản hồi thành công!`);
-        const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name);
+        const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name, isGroup ? senderName : undefined);
         await ZaloBotService.sendMessage(chatId, successMsg);
       }
     } finally {
