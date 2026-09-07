@@ -11,7 +11,7 @@ const BOT_API_BASE = 'https://bot-api.zaloplatforms.com';
 
 export class ZaloBotService {
   private static getBotToken(): string {
-    return process.env.ZALO_BOT_TOKEN || '684733288156613333:ceygrgzvNjJUtaXTTHBXHmiHninvaclCFZsEovKiJKATQJuTWhLKRQEYilAYKyVi';
+    return process.env.ZALO_BOT_TOKEN || '4012836441347575506:noMyFZmAkVsFcOzGLLHfhZFJQIzJbIuxAYEUZkBqOmdyFggRhYYiYCGRtVlEgToH';
   }
 
   /**

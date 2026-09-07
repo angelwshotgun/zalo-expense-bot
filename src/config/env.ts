@@ -17,6 +17,8 @@ const envSchema = z.object({
   ZALO_APP_ID: z.string().default(''),
   ZALO_OA_SECRET_KEY: z.string().default(''),
   ZALO_OA_ACCESS_TOKEN: z.string().default(''),
+  ZALO_BOT_TOKEN: z.string().default('4012836441347575506:noMyFZmAkVsFcOzGLLHfhZFJQIzJbIuxAYEUZkBqOmdyFggRhYYiYCGRtVlEgToH'),
+  ZALO_BOT_SECRET_TOKEN: z.string().default('zalo_bot_secret_token_12345678'),
 
   // Supabase Configuration
   SUPABASE_URL: z.string().url({ message: 'SUPABASE_URL phải là một URL hợp lệ' }),
