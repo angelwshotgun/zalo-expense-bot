@@ -644,6 +644,9 @@ export class ZaloBotHandler {
               return;
             }
           } else {
+            const customDate = ZaloBotHandler.extractTransactionDate(userText);
+            const dateDisplay = customDate ? ` (ngày ${customDate.dateDisplay})` : '';
+
             // Người dùng chỉ gõ tên danh mục mà chưa có số tiền và chưa có giao dịch ảnh trước đó
             await DatabaseService.savePendingClarification(
               user.id,
@@ -653,6 +656,7 @@ export class ZaloBotHandler {
                 transaction_type: catType,
                 description: userText,
                 raw_input: userText,
+                transaction_date: customDate?.dateIso || new Date().toISOString(),
               },
               'amount',
               15
@@ -660,7 +664,7 @@ export class ZaloBotHandler {
 
             await ZaloBotService.sendMessage(
               chatId,
-              `${matchedCat.icon} Đã nhận ${typeLabel}: **${matchedCat.name}**!\n` +
+              `${matchedCat.icon} Đã nhận ${typeLabel}: **${matchedCat.name}**${dateDisplay}!\n` +
               `👉 Bạn cho mình xin số tiền nhé (ví dụ: **115k**, **299k**, **35k**):`
             );
             return;
