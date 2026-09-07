@@ -1,0 +1,140 @@
+================================================================================
+          HƯỚNG DẪN SỬ DỤNG BOT QUẢN LÝ THU & CHI TIÊU TRÊN ZALO
+                 Dành cho Chủ Shop & Nhân viên Shop Hoa Sáp
+================================================================================
+
+I. BẢNG DANH MỤC CHUẨN CỦA SHOP
+
+1. DANH MỤC THU (BÁN HÀNG):
+--------------------------------------------------------------------------------
+STT  | MẶT HÀNG      | ICON | VÍ DỤ TIN NHẮN GHI NHẬN
+--------------------------------------------------------------------------------
+1    | Thư hoa       | ✉️   | Thư hoa 115k, +115k thư hoa
+2    | Huy chương    | 🏅   | Huy chương 85k, +85k huy chuong
+3    | Tủ hoa        | 🪞   | Tủ hoa 299k, tu hoa 350k
+4    | Thiệp lẻ      | 💌   | Thiệp lẻ 25k, thiep le 30k
+5    | Khung ảnh     | 🖼️   | Khung ảnh 180k, khung anh 220k
+6    | Cúp hoa       | 🏆   | Cúp hoa 450k, cup hoa 500k
+7    | Móc khóa      | 🔑   | Móc khóa 50k, moc khoa 45k
+8    | Khác          | 📦   | Bán các sản phẩm hoa sáp ngoài danh mục trên
+--------------------------------------------------------------------------------
+
+2. DANH MỤC CHI (CHI PHÍ HOẠT ĐỘNG):
+--------------------------------------------------------------------------------
+STT  | KHOẢN CHI       | ICON | MỤC ĐÍCH & VÍ DỤ
+--------------------------------------------------------------------------------
+1    | Nguyên vật liệu | 🧱   | Hoa sáp, ruy băng, xốp cắm, hộp mica, keo nến
+     |                 |      | VD: "Nguyên vật liệu 500k", "mua hoa sáp 1tr2"
+2    | Ship bưu cục    | 📮   | Gửi bưu điện, VNPost, Viettel Post, GHTK, ship chậm
+     |                 |      | VD: "Ship bưu cục 30k", "gửi bưu điện 45k"
+3    | Ship hoả tốc    | ⚡   | Grab, Ahamove, Be, Lalamove giao trong ngày
+     |                 |      | VD: "Ship hoả tốc 45k", "grab giao hoa 60k"
+4    | Khác            | 💸   | Tiền ăn uống, tiền điện, mặt bằng, sinh hoạt
+     |                 |      | VD: "-200k tiền điện", "ăn trưa 45k"
+--------------------------------------------------------------------------------
+
+================================================================================
+II. HƯỚNG DẪN GHI CHÉP NHANH (< 0.1 GIÂY)
+================================================================================
+
+1. GHI ĐƠN BÁN HÀNG:
+   Nhắn tin theo cú pháp: [Tên sản phẩm] + [Số tiền]
+   Ví dụ:
+   • Tủ hoa 299k
+   • Thư hoa 115k
+   • Móc khóa 50k
+   • +115k thư hoa
+   • Bán 2 khung ảnh 360k
+
+2. GHI KHOẢN CHI TIÊU:
+   Nhắn tin theo cú pháp: [Tên khoản chi] + [Số tiền]
+   Ví dụ:
+   • Nguyên vật liệu 500k
+   • Ship bưu cục 30k
+   • Ship hoả tốc 45k
+   • -200k tiền điện
+   • Ăn trưa nhân viên 45k
+
+* LƯU Ý VỀ CÁCH NHẬP SỐ TIỀN:
+  - Dùng 'k': 50k (= 50.000), 115k (= 115.000), 299k (= 299.000)
+  - Dùng chữ: 150 nghìn (= 150.000), 1tr2 hoặc 1.2 triệu (= 1.200.000)
+  - Dùng số đầy đủ: 299000 (= 299.000)
+
+================================================================================
+III. GỬI ẢNH CHUYỂN KHOẢN NGÂN HÀNG / BIÊN LAI
+================================================================================
+
+1. Khi khách chuyển khoản thành công, chụp ảnh màn hình và gửi vào Zalo.
+2. AI tự động quét và đọc đúng số tiền giao dịch.
+3. CHAT BỔ SUNG LIỀN MẠCH:
+   Vừa gửi ảnh xong, bạn chỉ cần chat ngay tên sản phẩm (VD: "Thư hoa" hoặc "Tủ hoa").
+   Bot sẽ tự động gộp ảnh và tin nhắn thành 1 đơn hàng duy nhất mà không hỏi lại!
+
+================================================================================
+IV. SỬA VÀ XÓA KHI GHI NHẦM
+================================================================================
+
+1. XÓA GIAO DỊCH VỪA GHI:
+   Nhắn bất kỳ câu nào sau đây:
+   • xóa
+   • xoá đơn
+   • xóa vừa rồi
+   • nhầm rồi xóa
+   • hủy đơn
+   -> Bot sẽ xóa ngay đơn gần nhất khỏi hệ thống.
+
+2. SỬA LẠI GIAO DỊCH:
+   • Sửa tiền: "sửa thành 350k" hoặc "350k mới đúng"
+   • Sửa mặt hàng: "đổi sang Thư hoa" hoặc "đổi thành Huy chương"
+   • Sửa cả tiền và loại: "đổi thành ship bưu cục 30k"
+
+================================================================================
+V. TRA CỨU & XEM BÁO CÁO THỐNG KÊ
+================================================================================
+
+1. PHÍM TẮT XEM BÁO CÁO NHANH:
+   • #baocao          : Xem tổng hợp Thu, Chi & Lợi nhuận hôm nay
+   • #baocaothu       : Xem riêng doanh thu bán hàng hôm nay
+   • #baocaochi       : Xem riêng các khoản chi hôm nay
+   • #baocao thangnay : Xem tổng hợp cả tháng này
+   • #baocaothu thangnay : Xem riêng doanh thu bán hàng cả tháng này
+   • #baocaochi thangnay : Xem riêng chi phí cả tháng này
+
+2. HỎI ĐÁP TỰ NHIÊN BẰNG AI (NL2Query Engine):
+   Bạn có thể hỏi tự do như nói chuyện với kế toán:
+   • "hãy cho tôi báo cáo thu chi của tháng 8/2026"
+   • "tháng này bán được bao nhiêu tiền tủ hoa rồi?"
+   • "từ đầu tuần đến giờ chi hết bao nhiêu tiền ship hoả tốc?"
+   • "hôm qua có những đơn nào?"
+   • "tháng 8/2026 doanh thu được bao nhiêu?"
+
+================================================================================
+VI. BẢNG TÓM TẮT NHANH (CHEAT SHEET)
+================================================================================
+
+🌸 BÁN HÀNG:
+   • Tủ hoa 299k
+   • Thư hoa 115k
+   • Huy chương 85k
+   • Móc khóa 50k
+   • Khung ảnh 180k
+   • Cúp hoa 450k
+   • Thiệp lẻ 25k
+
+💸 KHOẢN CHI:
+   • Nguyên vật liệu 500k
+   • Ship bưu cục 30k
+   • Ship hoả tốc 45k
+   • -200k tiền điện
+
+📊 BÁO CÁO:
+   • #baocao (Hôm nay)
+   • #baocao thangnay (Cả tháng)
+   • "báo cáo thu chi tháng 8/2026"
+   • "tháng này bán bao nhiêu tủ hoa?"
+
+🛠️ SỬA / XÓA:
+   • xóa (Xóa đơn gần nhất)
+   • sửa thành 350k
+   • đổi sang Thư hoa
+================================================================================
