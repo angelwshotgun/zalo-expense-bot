@@ -484,4 +484,102 @@ export class DatabaseService {
     const { start, end, monthStr } = this.getVietnamMonthRange();
     return this.getFinancialReport(userId, start, end, `Tháng ${monthStr}`);
   }
+
+  /**
+   * Truy vấn giao dịch linh hoạt theo khoảng thời gian, loại thu/chi, và danh mục (hỗ trợ NL2Query)
+   */
+  static async queryTransactionsCustom(
+    userId: string,
+    options: {
+      startDate?: string;
+      endDate?: string;
+      type?: 'ALL' | 'INCOME' | 'EXPENSE';
+      categoryName?: string | null;
+      limit?: number;
+    }
+  ): Promise<{
+    report: FinancialReport;
+    transactions: Transaction[];
+  }> {
+    const supabase = getSupabaseClient();
+    let query = supabase
+      .from('transactions')
+      .select('id, amount, transaction_type, description, raw_input, transaction_date, created_at, category:categories(id, name, icon, type)')
+      .eq('user_id', userId)
+      .order('transaction_date', { ascending: false });
+
+    if (options.startDate) {
+      query = query.gte('transaction_date', options.startDate);
+    }
+    if (options.endDate) {
+      query = query.lte('transaction_date', options.endDate);
+    }
+    if (options.type && options.type !== 'ALL') {
+      query = query.eq('transaction_type', options.type);
+    }
+
+    if (options.limit) {
+      query = query.limit(options.limit);
+    }
+
+    const { data: rawTxs, error } = await query;
+    if (error) {
+      console.error('Lỗi queryTransactionsCustom:', error);
+      throw error;
+    }
+
+    let txs = (rawTxs || []) as unknown as Transaction[];
+
+    // Nếu có lọc theo tên danh mục
+    if (options.categoryName) {
+      const normCat = options.categoryName.trim().toLowerCase();
+      txs = txs.filter((t) => t.category?.name?.toLowerCase().includes(normCat));
+    }
+
+    let totalIncome = 0;
+    let totalExpense = 0;
+    let incomeCount = 0;
+    let expenseCount = 0;
+    const map = new Map<string, CategorySummaryItem>();
+
+    for (const tx of txs) {
+      const amount = Number(tx.amount) || 0;
+      const type = tx.transaction_type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+      const cat = tx.category || { id: 7, name: 'Khác', icon: '📦', type: 'EXPENSE' };
+
+      if (type === 'INCOME') {
+        totalIncome += amount;
+        incomeCount++;
+      } else {
+        totalExpense += amount;
+        expenseCount++;
+      }
+
+      const key = `${cat.id}_${type}`;
+      const current = map.get(key) || {
+        category_id: cat.id,
+        category_name: cat.name,
+        category_icon: cat.icon || (type === 'INCOME' ? '🌸' : '💸'),
+        type,
+        total_amount: 0,
+        transaction_count: 0,
+      };
+      current.total_amount += amount;
+      current.transaction_count++;
+      map.set(key, current);
+    }
+
+    const report: FinancialReport = {
+      periodTitle: options.startDate && options.endDate ? `${options.startDate.slice(0, 10)} đến ${options.endDate.slice(0, 10)}` : 'Tất cả thời gian',
+      totalIncome,
+      totalExpense,
+      netAmount: totalIncome - totalExpense,
+      totalCount: txs.length,
+      incomeCount,
+      expenseCount,
+      items: Array.from(map.values()).sort((a, b) => b.total_amount - a.total_amount),
+    };
+
+    return { report, transactions: txs };
+  }
 }

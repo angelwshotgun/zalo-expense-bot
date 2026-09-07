@@ -127,11 +127,22 @@ export class ZaloBotHandler {
     const lowerText = userText.toLowerCase().trim();
 
     const isReportCommand =
-      lowerText.startsWith('#baocao') ||
-      lowerText.startsWith('báo cáo') ||
-      lowerText.startsWith('baocao') ||
+      lowerText === '#baocao' ||
+      lowerText === '#baocaothu' ||
+      lowerText === '#baocaochi' ||
+      lowerText === '#baocao thangnay' ||
+      lowerText === '#baocaothu thangnay' ||
+      lowerText === '#baocaochi thangnay' ||
       lowerText === '#homnay' ||
       lowerText === '#thangnay' ||
+      lowerText === 'báo cáo' ||
+      lowerText === 'baocao' ||
+      lowerText === 'báo cáo hôm nay' ||
+      lowerText === 'báo cáo tháng này' ||
+      lowerText === 'báo cáo thu' ||
+      lowerText === 'báo cáo chi' ||
+      lowerText === 'thống kê hôm nay' ||
+      lowerText === 'thống kê tháng này' ||
       lowerText === 'thống kê' ||
       lowerText === 'tổng kết';
 
@@ -372,6 +383,96 @@ export class ZaloBotHandler {
           `🤔 Bot chưa rõ bạn muốn sửa thông tin gì.\n` +
           `Bạn có thể nhắn ví dụ: "sửa thành Thư hoa" hoặc "đổi thành 200k" nhé!`
         );
+        return;
+      }
+    }
+
+    // =========================================================================
+    // TẦNG 1.2: BỘ MÁY TRUY VẤN & BÁO CÁO TỰ NHIÊN BẰNG AI (NL2QUERY ENGINE)
+    // =========================================================================
+    const isNaturalQueryCandidate =
+      lowerText.includes('báo cáo') ||
+      lowerText.includes('cho tôi') ||
+      lowerText.includes('cho mình') ||
+      lowerText.includes('hãy') ||
+      lowerText.includes('bao nhiêu') ||
+      lowerText.includes('thống kê') ||
+      lowerText.includes('tổng kết') ||
+      lowerText.includes('lịch sử') ||
+      lowerText.includes('xem') ||
+      lowerText.includes('hôm qua') ||
+      lowerText.includes('tuần trước') ||
+      lowerText.includes('tháng trước') ||
+      lowerText.includes('tháng này') ||
+      lowerText.includes('tổng thu') ||
+      lowerText.includes('tổng chi') ||
+      lowerText.includes('doanh thu') ||
+      lowerText.includes('chi phí') ||
+      /tháng\s*\d+/i.test(lowerText) ||
+      lowerText.endsWith('?');
+
+    if (isNaturalQueryCandidate && !photoUrl) {
+      console.log(`🔍 [Zalo Bot] Phát hiện câu hỏi/yêu cầu báo cáo: "${userText}". Bắt đầu phân tích qua AI...`);
+      const vnDate = new Date();
+      const vnNowStr = vnDate.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      const vnNowIso = vnDate.toISOString();
+
+      const parsedQuery = await LLMService.parseNaturalLanguageQuery(userText, {
+        nowIso: vnNowIso,
+        nowText: vnNowStr,
+      });
+
+      if (parsedQuery && parsedQuery.is_query) {
+        console.log(`🤖 [Zalo Bot - NL2Query] Kết quả phân tích:`, JSON.stringify(parsedQuery, null, 2));
+
+        const customQueryResult = await DatabaseService.queryTransactionsCustom(user.id, {
+          startDate: parsedQuery.start_date || undefined,
+          endDate: parsedQuery.end_date || undefined,
+          type: parsedQuery.type_filter || 'ALL',
+          categoryName: parsedQuery.category_filter || undefined,
+        });
+
+        // Nếu là yêu cầu xem báo cáo tổng thể hoặc theo mốc thời gian -> dùng format báo cáo chuẩn đẹp
+        const isGeneralReportReq =
+          lowerText.includes('báo cáo') ||
+          lowerText.includes('tổng kết') ||
+          lowerText.includes('thống kê') ||
+          !parsedQuery.specific_question;
+
+        if (isGeneralReportReq && !parsedQuery.category_filter) {
+          const report = customQueryResult.report;
+          if (parsedQuery.period_title) {
+            report.periodTitle = parsedQuery.period_title;
+          }
+          const reportText = ZaloBotService.buildReportText(report, parsedQuery.type_filter || 'ALL');
+          await ZaloBotService.sendMessage(chatId, reportText);
+          return;
+        }
+
+        // Nếu là câu hỏi cụ thể (ví dụ: "tháng này bán được bao nhiêu tiền tủ hoa?") -> AI sinh câu trả lời trực tiếp
+        const aiAnswer = await LLMService.generateQueryAnswer(userText, {
+          periodTitle: parsedQuery.period_title || customQueryResult.report.periodTitle,
+          totalIncome: customQueryResult.report.totalIncome,
+          totalExpense: customQueryResult.report.totalExpense,
+          netAmount: customQueryResult.report.netAmount,
+          incomeCount: customQueryResult.report.incomeCount,
+          expenseCount: customQueryResult.report.expenseCount,
+          items: customQueryResult.report.items,
+          transactions: customQueryResult.transactions,
+        });
+
+        if (aiAnswer) {
+          await ZaloBotService.sendMessage(chatId, aiAnswer);
+          return;
+        }
+
+        // Fallback sang buildReportText nếu AI answer rỗng
+        const report = customQueryResult.report;
+        if (parsedQuery.period_title) {
+          report.periodTitle = parsedQuery.period_title;
+        }
+        const reportText = ZaloBotService.buildReportText(report, parsedQuery.type_filter || 'ALL');
+        await ZaloBotService.sendMessage(chatId, reportText);
         return;
       }
     }
@@ -696,7 +797,15 @@ export class ZaloBotHandler {
    */
   public static extractAmount(text: string): number | null {
     if (!text) return null;
-    const lower = text.toLowerCase();
+
+    // Loại bỏ các mẫu ngày tháng năm trước khi trích xuất tiền: ví dụ 8/2026, 07/09/2026, năm 2026, tháng 8
+    const cleaned = text
+      .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, ' ')
+      .replace(/\b(?:tháng|thang)\s*\d{1,2}(?:\/\d{2,4})?\b/gi, ' ')
+      .replace(/\b(?:năm|nam)\s*\d{4}\b/gi, ' ')
+      .replace(/\/\d{4}\b/g, ' ');
+
+    const lower = cleaned.toLowerCase();
 
     // 1. Dạng triệu phức: 1tr2, 1tr200, 1 triệu 200
     const trComplex = lower.match(/(\d+)\s*(?:tr|triệu)\s*(\d+)/i);
@@ -729,10 +838,13 @@ export class ZaloBotHandler {
       if (val > 0) return val;
     }
 
-    // 5. Dạng số liền: +50000, 50000, 115000
+    // 5. Dạng số liền: +50000, 50000, 115000 (loại trừ các số 4 chữ số thuộc về năm 2020-2035)
     const pureNumMatch = lower.match(/(?:^|\D)(\d{4,9})(?:\s*(?:đ|vnd|dong))?(?:\D|$)/i);
     if (pureNumMatch) {
       const val = parseInt(pureNumMatch[1], 10);
+      if (val >= 2020 && val <= 2035 && !lower.includes('đ') && !lower.includes('vnd') && !lower.includes('dong')) {
+        return null;
+      }
       if (val > 0) return val;
     }
 

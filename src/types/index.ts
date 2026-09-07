@@ -116,6 +116,16 @@ export interface LLMExtractionResult {
   clarification: LLMClarificationData;
 }
 
+export interface NLQueryParseResult {
+  is_query: boolean;
+  start_date?: string | null;
+  end_date?: string | null;
+  period_title?: string | null;
+  type_filter: 'ALL' | 'INCOME' | 'EXPENSE';
+  category_filter?: string | null;
+  specific_question?: string | null;
+}
+
 // ------------------------------------------------------------------------------
 // 3. ZALO OA WEBHOOK & API PAYLOADS
 // ------------------------------------------------------------------------------

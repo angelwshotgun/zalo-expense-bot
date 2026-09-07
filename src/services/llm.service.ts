@@ -6,7 +6,7 @@
 import { GoogleGenerativeAI, SchemaType, ResponseSchema } from '@google/generative-ai';
 import OpenAI from 'openai';
 import { env } from '../config/env.js';
-import { LLMExtractionResult } from '../types/index.js';
+import { LLMExtractionResult, NLQueryParseResult } from '../types/index.js';
 
 const SYSTEM_INSTRUCTION = `Bạn là trợ lý tài chính thông minh chuyên trích xuất dữ liệu thu/chi và bán hàng từ tin nhắn văn bản hoặc hình ảnh hóa đơn, biên lai, ảnh chụp màn hình ngân hàng (Vietcombank, MBBank, Techcombank, MoMo, BIDV, v.v.).
 
@@ -113,6 +113,49 @@ const GEMINI_RESPONSE_SCHEMA: ResponseSchema = {
   required: ['status', 'transaction', 'clarification'],
 };
 
+// JSON Schema cho Natural Language Query Parser
+const QUERY_PARSE_SCHEMA: ResponseSchema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    is_query: {
+      type: SchemaType.BOOLEAN,
+      description: 'true nếu người dùng đang hỏi, tra cứu, hoặc xin báo cáo/thống kê tài chính. false nếu người dùng đang ghi nhận giao dịch mới.',
+    },
+    start_date: {
+      type: SchemaType.STRING,
+      description: 'Mốc bắt đầu dạng ISO 8601 múi giờ +07:00 (ví dụ 2026-08-01T00:00:00.000+07:00)',
+      nullable: true,
+    },
+    end_date: {
+      type: SchemaType.STRING,
+      description: 'Mốc kết thúc dạng ISO 8601 múi giờ +07:00 (ví dụ 2026-08-31T23:59:59.999+07:00)',
+      nullable: true,
+    },
+    period_title: {
+      type: SchemaType.STRING,
+      description: 'Tiêu đề khoảng thời gian (ví dụ: Tháng 8/2026, Hôm qua 06/09/2026, Tuần này)',
+      nullable: true,
+    },
+    type_filter: {
+      type: SchemaType.STRING,
+      format: 'enum',
+      enum: ['ALL', 'INCOME', 'EXPENSE'],
+      description: 'Bộ lọc loại giao dịch: ALL, INCOME, hoặc EXPENSE',
+    },
+    category_filter: {
+      type: SchemaType.STRING,
+      description: 'Tên danh mục cụ thể nếu người dùng hỏi đích danh (hoặc null)',
+      nullable: true,
+    },
+    specific_question: {
+      type: SchemaType.STRING,
+      description: 'Tóm tắt câu hỏi cụ thể của người dùng',
+      nullable: true,
+    },
+  },
+  required: ['is_query', 'type_filter', 'start_date', 'end_date', 'period_title', 'category_filter', 'specific_question'],
+};
+
 export class LLMService {
   private static geminiClient: GoogleGenerativeAI | null = null;
   private static openaiClient: OpenAI | null = null;
@@ -173,7 +216,7 @@ export class LLMService {
     }
 
     // Thử danh sách các model flash mới nhất của Gemini
-    const candidateModels = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.8-flash'];
+    const candidateModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-2.5-flash-lite'];
     let lastError: unknown = null;
 
     const parts: Array<string | { inlineData: { data: string; mimeType: string } }> = [];
@@ -361,5 +404,185 @@ export class LLMService {
       },
       clarification: { missing_field: null, question: null },
     };
+  }
+
+  /**
+   * Phân tích ngôn ngữ tự nhiên để nhận diện yêu cầu truy vấn / báo cáo / thống kê (NL2Query)
+   */
+  static async parseNaturalLanguageQuery(
+    userPrompt: string,
+    contextInfo: { nowIso: string; nowText: string }
+  ): Promise<NLQueryParseResult> {
+    const gemini = this.getGemini();
+    if (!gemini) {
+      return this.fallbackQueryParse(userPrompt, contextInfo);
+    }
+
+    const candidateModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-2.5-flash-lite'];
+
+    const systemPrompt = `Bạn là chuyên gia phân tích yêu cầu tài chính tiếng Việt cho một shop hoa sáp.
+Nhiệm vụ của bạn là xác định xem tin nhắn của người dùng là một YÊU CẦU TRUY VẤN/BÁO CÁO/THỐNG KÊ (is_query: true) hay là một hành động GHI CHÉP GIAO DỊCH MỚI (is_query: false).
+
+Thời điểm hiện tại: ${contextInfo.nowText} (ISO: ${contextInfo.nowIso}). Múi giờ Việt Nam (UTC+7).
+
+1. is_query = true khi người dùng:
+- Hỏi về báo cáo, doanh thu, chi phí, thống kê, kiểm tra số liệu, tổng kết, tra cứu lịch sử giao dịch.
+  Ví dụ:
+  + "hãy cho tôi báo cáo thu chi của tháng 8/2026"
+  + "tháng này bán được bao nhiêu tiền tủ hoa rồi?"
+  + "từ đầu tuần đến giờ chi hết bao nhiêu tiền ship?"
+  + "hôm qua có những đơn nào?"
+  + "tháng 8/2026 doanh thu được bao nhiêu"
+  + "báo cáo thu chi tuần này"
+- Quy tắc chuyển đổi ngày tháng (UTC+7):
+  + Nếu hỏi về tháng cụ thể (ví dụ "tháng 8/2026" hoặc "tháng 8 năm 2026"): start_date là 00:00:00 ngày đầu tháng, end_date là 23:59:59 ngày cuối tháng đó (năm 2026, tháng 8 có 31 ngày -> start_date: "2026-08-01T00:00:00.000+07:00", end_date: "2026-08-31T23:59:59.999+07:00", period_title: "Tháng 8/2026").
+  + "hôm nay": 00:00:00 đến 23:59:59 của ngày hiện tại.
+  + "hôm qua": 00:00:00 đến 23:59:59 của ngày hôm qua.
+  + "tháng này": từ ngày 1 đến ngày cuối của tháng hiện tại.
+  + "tuần này": từ Thứ Hai đầu tuần đến Chủ Nhật cuối tuần.
+- type_filter:
+  + 'INCOME' nếu hỏi về thu/bán hàng/doanh thu.
+  + 'EXPENSE' nếu hỏi về chi/chi phí/tiền mua/tiền ship.
+  + 'ALL' nếu hỏi tổng hợp hoặc thu chi chung.
+- category_filter: nếu người dùng nhắc đến mặt hàng/khoản chi cụ thể (Thư hoa, Huy chương, Tủ hoa, Thiệp lẻ, Khung ảnh, Cúp hoa, Móc khóa, Nguyên vật liệu, Ship bưu cục, Ship hoả tốc, Khác).
+
+2. is_query = false khi người dùng:
+- Ghi nhận đơn hàng bán được hoặc khoản chi mới (Ví dụ: "tủ hoa 299k", "nguyên vật liệu 500k", "ship bưu cục 30k", "+50k móc khoá").
+- Tin nhắn chào hỏi thông thường ("alo", "chào bạn").`;
+
+    for (const modelName of candidateModels) {
+      try {
+        const model = gemini.getGenerativeModel({
+          model: modelName,
+          systemInstruction: systemPrompt,
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: QUERY_PARSE_SCHEMA,
+            temperature: 0.1,
+          },
+        });
+
+        const result = await model.generateContent(`Phân tích câu người dùng: "${userPrompt}"`);
+        const response = await result.response;
+        const parsed = JSON.parse(response.text()) as NLQueryParseResult;
+        if (parsed.is_query && parsed.start_date && !parsed.end_date) {
+          const ym = parsed.start_date.match(/^(\d{4})-(\d{2})/);
+          if (ym) {
+            const y = parseInt(ym[1], 10);
+            const m = parseInt(ym[2], 10);
+            const lastDay = new Date(y, m, 0).getDate();
+            parsed.end_date = `${y}-${String(m).padStart(2, '0')}-${lastDay}T23:59:59.999+07:00`;
+            if (!parsed.period_title) {
+              parsed.period_title = `Tháng ${m}/${y}`;
+            }
+          }
+        }
+        return parsed;
+      } catch (err) {
+        console.warn(`⚠️ [Gemini parseQuery ${modelName}] lỗi:`, (err as Error).message);
+      }
+    }
+
+    return this.fallbackQueryParse(userPrompt, contextInfo);
+  }
+
+  /**
+   * Bộ phân tích dự phòng khi không có kết nối LLM
+   */
+  private static fallbackQueryParse(
+    prompt: string,
+    contextInfo: { nowIso: string; nowText: string }
+  ): NLQueryParseResult {
+    const lower = prompt.toLowerCase();
+    const isQueryWord =
+      lower.includes('báo cáo') ||
+      lower.includes('cho tôi') ||
+      lower.includes('thống kê') ||
+      lower.includes('tổng kết') ||
+      lower.includes('bao nhiêu') ||
+      lower.includes('lịch sử') ||
+      lower.includes('xem');
+
+    if (!isQueryWord) {
+      return { is_query: false, type_filter: 'ALL' };
+    }
+
+    let typeFilter: 'ALL' | 'INCOME' | 'EXPENSE' = 'ALL';
+    if (lower.includes('thu') || lower.includes('bán') || lower.includes('doanh thu')) {
+      typeFilter = lower.includes('chi') ? 'ALL' : 'INCOME';
+    } else if (lower.includes('chi') || lower.includes('phí') || lower.includes('ship')) {
+      typeFilter = 'EXPENSE';
+    }
+
+    // Bắt tháng/năm: ví dụ "tháng 8/2026", "tháng 8 2026", "tháng 8"
+    const monthYearMatch = lower.match(/tháng\s*(\d{1,2})(?:[\/\s-]+(\d{4}))?/);
+    if (monthYearMatch) {
+      const month = parseInt(monthYearMatch[1], 10);
+      const year = monthYearMatch[2] ? parseInt(monthYearMatch[2], 10) : new Date().getFullYear();
+      if (month >= 1 && month <= 12) {
+        const lastDay = new Date(year, month, 0).getDate();
+        const mm = String(month).padStart(2, '0');
+        return {
+          is_query: true,
+          start_date: `${year}-${mm}-01T00:00:00.000+07:00`,
+          end_date: `${year}-${mm}-${lastDay}T23:59:59.999+07:00`,
+          period_title: `Tháng ${month}/${year}`,
+          type_filter: typeFilter,
+          specific_question: prompt,
+        };
+      }
+    }
+
+    return {
+      is_query: true,
+      type_filter: typeFilter,
+      period_title: 'Khoảng thời gian yêu cầu',
+      specific_question: prompt,
+    };
+  }
+
+  /**
+   * Sinh câu trả lời thông minh bằng AI từ kết quả truy vấn dữ liệu thực tế
+   */
+  static async generateQueryAnswer(
+    userPrompt: string,
+    queryData: {
+      periodTitle: string;
+      totalIncome: number;
+      totalExpense: number;
+      netAmount: number;
+      incomeCount: number;
+      expenseCount: number;
+      items: Array<{ category_name: string; category_icon: string | null; type: string; total_amount: number; transaction_count: number }>;
+      transactions: Array<{ amount: number; transaction_type: string; description: string | null; transaction_date: string }>;
+    }
+  ): Promise<string> {
+    const gemini = this.getGemini();
+    if (!gemini) return '';
+
+    const candidateModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-2.5-flash-lite'];
+    const prompt = `Bạn là trợ lý tài chính thông minh của một shop hoa sáp.
+Người dùng vừa hỏi: "${userPrompt}"
+
+Dữ liệu thực tế truy vấn từ cơ sở dữ liệu cho khoảng thời gian (${queryData.periodTitle}):
+- Tổng thu (Bán hàng): ${new Intl.NumberFormat('vi-VN').format(queryData.totalIncome)} đ (${queryData.incomeCount} đơn)
+- Tổng chi: ${new Intl.NumberFormat('vi-VN').format(queryData.totalExpense)} đ (${queryData.expenseCount} lần)
+- Lợi nhuận ròng: ${new Intl.NumberFormat('vi-VN').format(queryData.netAmount)} đ
+- Chi tiết từng danh mục:
+${queryData.items.map(i => `  + ${i.category_icon || '📦'} ${i.category_name} (${i.type}): ${new Intl.NumberFormat('vi-VN').format(i.total_amount)} đ (${i.transaction_count} lần)`).join('\n')}
+
+Hãy trả lời trực tiếp câu hỏi của người dùng một cách rõ ràng, ngắn gọn, chuẩn xác theo định dạng Markdown Zalo (dùng icon sinh động, số tiền bôi đậm). Nếu không có dữ liệu, hãy thông báo lịch sự rằng không có giao dịch nào được ghi nhận trong thời gian này.`;
+
+    for (const modelName of candidateModels) {
+      try {
+        const model = gemini.getGenerativeModel({ model: modelName });
+        const res = await model.generateContent(prompt);
+        const text = res.response.text();
+        if (text && text.trim().length > 0) return text.trim();
+      } catch (err) {
+        console.warn(`⚠️ [Gemini generateAnswer ${modelName}] lỗi:`, (err as Error).message);
+      }
+    }
+    return '';
   }
 }
