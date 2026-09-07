@@ -95,7 +95,22 @@ export class ZaloBotHandler {
     const senderId = msg.from.id;
     const senderName = msg.from.display_name;
     const chatId = msg.chat.id;
-    const userText = (msg.text || msg.caption || '').trim();
+    const rawText = (msg.text || msg.caption || '').trim();
+
+    // Tự động loại bỏ @mention tên Bot khi nhắn trong nhóm chat
+    // Ví dụ: "@Bot Thu Chi Shop Hoa Xinh Tủ hoa 299k" -> "Tủ hoa 299k"
+    // "@bot.YhvSQgmd #baocao" -> "#baocao"
+    let userText = rawText
+      .replace(/^@Bot\s*Thu\s*Chi\s*Shop\s*Hoa\s*Xinh\s*[:,-]?\s*/i, '')
+      .replace(/^@bot\.YhvSQgmd\s*[:,-]?\s*/i, '')
+      .replace(/^@Bot[^\s:]*(\s+[^\s:]+){0,5}?\s*[:,-]?\s*/i, '')
+      .replace(/^@[^\s]+\s*[:,-]?\s*/i, '')
+      .trim();
+
+    // Nếu sau khi xóa tag mà rỗng (người dùng chỉ tag bot để chào hoặc test)
+    if (!userText && rawText.startsWith('@')) {
+      userText = '#help';
+    }
 
     // Trích xuất photo_url hỗ trợ mọi định dạng từ Zalo Bot Platform
     let photoUrl: string | undefined = undefined;
