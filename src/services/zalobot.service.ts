@@ -11,7 +11,14 @@ const BOT_API_BASE = 'https://bot-api.zaloplatforms.com';
 
 export class ZaloBotService {
   private static getBotToken(): string {
-    return process.env.ZALO_BOT_TOKEN || '4012836441347575506:noMyFZmAkVsFcOzGLLHfhZFJQIzJbIuxAYEUZkBqOmdyFggRhYYiYCGRtVlEgToH';
+    const envToken = process.env.ZALO_BOT_TOKEN || env.ZALO_BOT_TOKEN;
+    const oldToken = '684733288156613333:ceygrgzvNjJUtaXTTHBXHmiHninvaclCFZsEovKiJKATQJuTWhLKRQEYilAYKyVi';
+    const currentToken = '4012836441347575506:noMyFZmAkVsFcOzGLLHfhZFJQIzJbIuxAYEUZkBqOmdyFggRhYYiYCGRtVlEgToH';
+
+    if (!envToken || envToken === oldToken) {
+      return currentToken;
+    }
+    return envToken;
   }
 
   /**
