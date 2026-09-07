@@ -48,6 +48,10 @@ Quy tắc xử lý:
      + Có tên danh mục nhưng KHÔNG có số tiền -> missing_field = 'amount', giữ nguyên category_name.
    - 'IRRELEVANT': Tin nhắn chào hỏi ("alo", "chào bot", "test") hoặc ảnh hoàn toàn không liên quan đến tiền bạc/thanh toán.
 
+5. Thời gian giao dịch (transaction_date):
+   - Nếu tin nhắn hoặc ảnh có ngày giao dịch cụ thể (ví dụ: "hôm qua", "hôm kia", "ngày 05/09", ngày giờ trên ảnh chuyển khoản), hãy trích xuất ngày dạng ISO 8601 múi giờ +07:00.
+   - Nếu không nói ngày, để null.
+
 Tuyệt đối chỉ trả về JSON hợp lệ theo đúng schema được định nghĩa.`;
 
 // JSON Schema chuẩn cho Gemini Structured Outputs
@@ -447,7 +451,7 @@ Thời điểm hiện tại: ${contextInfo.nowText} (ISO: ${contextInfo.nowIso})
 - category_filter: nếu người dùng nhắc đến mặt hàng/khoản chi cụ thể (Thư hoa, Huy chương, Tủ hoa, Thiệp lẻ, Khung ảnh, Cúp hoa, Móc khóa, Nguyên vật liệu, Ship bưu cục, Ship hoả tốc, Khác).
 
 2. is_query = false khi người dùng:
-- Ghi nhận đơn hàng bán được hoặc khoản chi mới (Ví dụ: "tủ hoa 299k", "nguyên vật liệu 500k", "ship bưu cục 30k", "+50k móc khoá").
+- Ghi nhận đơn hàng bán được hoặc khoản chi mới, kể cả ghi nhận cho ngày quá khứ (Ví dụ: "tủ hoa 299k", "hôm qua tủ hoa 299k", "hôm kia nguyên vật liệu 500k", "ngày 05/09 bán thư hoa 115k", "ship bưu cục 30k", "+50k móc khoá").
 - Tin nhắn chào hỏi thông thường ("alo", "chào bạn").`;
 
     for (const modelName of candidateModels) {

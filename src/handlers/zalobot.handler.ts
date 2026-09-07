@@ -413,19 +413,64 @@ export class ZaloBotHandler {
       }
     }
 
+    // Kiểm tra xem tin nhắn có phải rõ ràng là câu hỏi / yêu cầu báo cáo / tra cứu hay không
+    const isExplicitQuery =
+      lowerText.includes('báo cáo') ||
+      lowerText.includes('cho tôi') ||
+      lowerText.includes('cho mình') ||
+      lowerText.includes('thống kê') ||
+      lowerText.includes('tổng kết') ||
+      lowerText.includes('bao nhiêu') ||
+      lowerText.includes('lịch sử') ||
+      lowerText.includes('xem') ||
+      lowerText.includes('kiểm tra') ||
+      lowerText.includes('tra cứu') ||
+      lowerText.includes('những đơn') ||
+      lowerText.includes('đơn nào') ||
+      lowerText.endsWith('?');
+
+    // =========================================================================
+    // TẦNG 1.5: BỘ PHÂN TÍCH NHANH SIÊU TỐC (0 TOKEN LLM, PHẢN HỒI < 10MS)
+    // Xử lý tức thì các giao dịch hôm nay lẫn quá khứ (hôm qua, hôm kia, ngày 05/09)
+    // =========================================================================
+    if (!photoUrl && userText && !isExplicitQuery) {
+      // Nếu user đang có một ảnh đang được tải/phân tích trong vòng 25s, tạm hoãn xử lý độc lập
+      // để chờ ảnh đọc xong và tự động liên kết thành một giao dịch hoàn chỉnh
+      const inFlight = inFlightImageTasks.get(user.id);
+      if (inFlight && Date.now() - inFlight.timestamp < 25000) {
+        console.log(`⏳ User ${user.id} vừa gửi ảnh và đang chat bổ sung: "${userText}". Sẽ tự động liên kết khi ảnh đọc xong!`);
+        return;
+      }
+
+      const quickParsed = ZaloBotHandler.parseQuickInput(userText);
+      if (quickParsed) {
+        const customDate = ZaloBotHandler.extractTransactionDate(userText);
+        const txDate = customDate ? customDate.dateIso : new Date().toISOString();
+        console.log(`⚡ [Zalo Bot - Tier 1.5: Fast Local Parser] Khớp nhanh: ${quickParsed.category_name} - ${quickParsed.amount}đ (${quickParsed.transaction_type}) - Ngày: ${customDate ? customDate.dateDisplay : 'Hôm nay'}`);
+
+        const matchedCategory = await DatabaseService.matchCategoryByName(quickParsed.category_name);
+        const tx = await DatabaseService.createTransaction({
+          user_id: user.id,
+          amount: quickParsed.amount,
+          category_id: matchedCategory?.id,
+          transaction_type: quickParsed.transaction_type,
+          description: quickParsed.description || matchedCategory?.name,
+          raw_input: userText,
+          transaction_date: txDate,
+        });
+
+        await DatabaseService.clearPendingClarification(user.id);
+        const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name, isGroup ? senderName : undefined);
+        await ZaloBotService.sendMessage(chatId, successMsg);
+        return;
+      }
+    }
+
     // =========================================================================
     // TẦNG 1.2: BỘ MÁY TRUY VẤN & BÁO CÁO TỰ NHIÊN BẰNG AI (NL2QUERY ENGINE)
     // =========================================================================
     const isNaturalQueryCandidate =
-      lowerText.includes('báo cáo') ||
-      lowerText.includes('cho tôi') ||
-      lowerText.includes('cho mình') ||
-      lowerText.includes('hãy') ||
-      lowerText.includes('bao nhiêu') ||
-      lowerText.includes('thống kê') ||
-      lowerText.includes('tổng kết') ||
-      lowerText.includes('lịch sử') ||
-      lowerText.includes('xem') ||
+      isExplicitQuery ||
       lowerText.includes('hôm qua') ||
       lowerText.includes('tuần trước') ||
       lowerText.includes('tháng trước') ||
@@ -434,8 +479,7 @@ export class ZaloBotHandler {
       lowerText.includes('tổng chi') ||
       lowerText.includes('doanh thu') ||
       lowerText.includes('chi phí') ||
-      /tháng\s*\d+/i.test(lowerText) ||
-      lowerText.endsWith('?');
+      /tháng\s*\d+/i.test(lowerText);
 
     if (isNaturalQueryCandidate && !photoUrl) {
       console.log(`🔍 [Zalo Bot] Phát hiện câu hỏi/yêu cầu báo cáo: "${userText}". Bắt đầu phân tích qua AI...`);
@@ -504,39 +548,6 @@ export class ZaloBotHandler {
     }
 
     // =========================================================================
-    // TẦNG 1.5: BỘ PHÂN TÍCH NHANH SIÊU TỐC (0 TOKEN LLM, PHẢN HỒI < 100MS)
-    // =========================================================================
-    if (!photoUrl && userText) {
-      // Nếu user đang có một ảnh đang được tải/phân tích trong vòng 25s, tạm hoãn xử lý độc lập
-      // để chờ ảnh đọc xong và tự động liên kết thành một giao dịch hoàn chỉnh
-      const inFlight = inFlightImageTasks.get(user.id);
-      if (inFlight && Date.now() - inFlight.timestamp < 25000) {
-        console.log(`⏳ User ${user.id} vừa gửi ảnh và đang chat bổ sung: "${userText}". Sẽ tự động liên kết khi ảnh đọc xong!`);
-        return;
-      }
-
-      const quickParsed = ZaloBotHandler.parseQuickInput(userText);
-      if (quickParsed) {
-        console.log(`⚡ [Zalo Bot - Tier 1.5: Fast Local Parser] Khớp nhanh: ${quickParsed.category_name} - ${quickParsed.amount}đ (${quickParsed.transaction_type})`);
-        const matchedCategory = await DatabaseService.matchCategoryByName(quickParsed.category_name);
-        const tx = await DatabaseService.createTransaction({
-          user_id: user.id,
-          amount: quickParsed.amount,
-          category_id: matchedCategory?.id,
-          transaction_type: quickParsed.transaction_type,
-          description: quickParsed.description || matchedCategory?.name,
-          raw_input: userText,
-          transaction_date: new Date().toISOString(),
-        });
-
-        await DatabaseService.clearPendingClarification(user.id);
-        const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name, isGroup ? senderName : undefined);
-        await ZaloBotService.sendMessage(chatId, successMsg);
-        return;
-      }
-    }
-
-    // =========================================================================
     // TẦNG 2: KIỂM TRA PHIÊN CHỜ LÀM RÕ DỞ (PENDING CLARIFICATION)
     // =========================================================================
     const pending = await DatabaseService.getPendingClarification(user.id);
@@ -549,6 +560,8 @@ export class ZaloBotHandler {
         const preferredType = pending.partial_transaction.transaction_type;
         const matchedCat = await DatabaseService.matchCategoryByName(userText, preferredType);
         if (matchedCat) {
+          const customDate = ZaloBotHandler.extractTransactionDate(userText);
+          const finalDate = customDate?.dateIso || pending.partial_transaction.transaction_date || new Date().toISOString();
           const tx = await DatabaseService.createTransaction({
             user_id: user.id,
             amount: pending.partial_transaction.amount || 0,
@@ -557,7 +570,7 @@ export class ZaloBotHandler {
             description: pending.partial_transaction.description || userText || matchedCat.name,
             raw_input: `${pending.partial_transaction.raw_input || ''} + ${userText}`,
             image_url: pending.partial_transaction.image_url,
-            transaction_date: pending.partial_transaction.transaction_date || new Date().toISOString(),
+            transaction_date: finalDate,
           });
 
           await DatabaseService.clearPendingClarification(user.id);
@@ -574,6 +587,8 @@ export class ZaloBotHandler {
         if (amount && amount > 0) {
           const categories = await DatabaseService.getCategories();
           const cat = categories.find((c) => c.id === (pending.partial_transaction as any).category_id) || categories[0];
+          const customDate = ZaloBotHandler.extractTransactionDate(userText);
+          const finalDate = customDate?.dateIso || pending.partial_transaction.transaction_date || new Date().toISOString();
 
           const tx = await DatabaseService.createTransaction({
             user_id: user.id,
@@ -583,7 +598,7 @@ export class ZaloBotHandler {
             description: pending.partial_transaction.description || userText,
             raw_input: `${pending.partial_transaction.raw_input || ''} + ${userText}`,
             image_url: pending.partial_transaction.image_url,
-            transaction_date: pending.partial_transaction.transaction_date || new Date().toISOString(),
+            transaction_date: finalDate,
           });
 
           await DatabaseService.clearPendingClarification(user.id);
@@ -796,6 +811,9 @@ export class ZaloBotHandler {
           extraction.transaction.type
         );
 
+        const customDate = userText ? ZaloBotHandler.extractTransactionDate(userText) : null;
+        const finalTxDate = customDate?.dateIso || extraction.transaction.transaction_date || new Date().toISOString();
+
         const tx = await DatabaseService.createTransaction({
           user_id: user.id,
           amount: extraction.transaction.amount,
@@ -804,7 +822,7 @@ export class ZaloBotHandler {
           description: extraction.transaction.description || userText || matchedCategory?.name,
           raw_input: userText || '[Ảnh hóa đơn/chuyển khoản]',
           image_url: photoUrl,
-          transaction_date: extraction.transaction.transaction_date || new Date().toISOString(),
+          transaction_date: finalTxDate,
         });
 
         console.log(`✅ [Zalo Bot] Đã lưu giao dịch ${tx.id} (${tx.amount}đ) và gửi phản hồi thành công!`);
@@ -824,9 +842,9 @@ export class ZaloBotHandler {
   public static extractAmount(text: string): number | null {
     if (!text) return null;
 
-    // Loại bỏ các mẫu ngày tháng năm trước khi trích xuất tiền: ví dụ 8/2026, 07/09/2026, năm 2026, tháng 8
+    // Loại bỏ các mẫu ngày tháng năm trước khi trích xuất tiền: ví dụ 05/09, 05/09/2026, 8/2026, năm 2026, tháng 8
     const cleaned = text
-      .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, ' ')
+      .replace(/\b(?:\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)\b/g, ' ')
       .replace(/\b(?:tháng|thang)\s*\d{1,2}(?:\/\d{2,4})?\b/gi, ' ')
       .replace(/\b(?:năm|nam)\s*\d{4}\b/gi, ' ')
       .replace(/\/\d{4}\b/g, ' ');
@@ -872,6 +890,107 @@ export class ZaloBotHandler {
         return null;
       }
       if (val > 0) return val;
+    }
+
+    return null;
+  }
+
+  /**
+   * Trích xuất ngày giao dịch trong quá khứ hoặc ngày cụ thể từ tin nhắn (ví dụ: hôm qua, hôm kia, ngày 05/09, 05/09/2026)
+   */
+  public static extractTransactionDate(text: string): {
+    dateIso: string;
+    dateDisplay: string;
+    matchedText: string;
+  } | null {
+    if (!text) return null;
+    const lower = text.toLowerCase().trim();
+
+    // Lấy ngày hiện tại theo giờ Việt Nam (UTC+7)
+    const vnFormatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const todayVnStr = vnFormatter.format(new Date()); // YYYY-MM-DD
+    const [currentYearStr, currentMonthStr, currentDayStr] = todayVnStr.split('-');
+    const currentYear = parseInt(currentYearStr, 10);
+    const currentMonth = parseInt(currentMonthStr, 10);
+    const currentDay = parseInt(currentDayStr, 10);
+
+    const formatIso = (y: number, m: number, d: number) => {
+      const yStr = String(y);
+      const mStr = String(m).padStart(2, '0');
+      const dStr = String(d).padStart(2, '0');
+      return `${yStr}-${mStr}-${dStr}T12:00:00.000+07:00`;
+    };
+
+    const formatDisplay = (d: number, m: number, y: number) => {
+      return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+    };
+
+    // 1. "hôm kia" / "ngày hôm kia" (-2 ngày)
+    if (/\b(?:ngày\s+)?hôm\s*kia\b/i.test(lower) || /\b(?:ngay\s+)?hom\s*kia\b/i.test(lower)) {
+      const targetDate = new Date(Date.UTC(currentYear, currentMonth - 1, currentDay - 2));
+      const y = targetDate.getUTCFullYear();
+      const m = targetDate.getUTCMonth() + 1;
+      const d = targetDate.getUTCDate();
+      return {
+        dateIso: formatIso(y, m, d),
+        dateDisplay: formatDisplay(d, m, y),
+        matchedText: 'hôm kia',
+      };
+    }
+
+    // 2. "hôm qua" / "hôm trước" / "ngày hôm qua" (-1 ngày)
+    if (
+      /\b(?:ngày\s+)?hôm\s*(?:qua|trước|trc)\b/i.test(lower) ||
+      /\b(?:ngay\s+)?hom\s*(?:qua|truoc|trc)\b/i.test(lower)
+    ) {
+      const targetDate = new Date(Date.UTC(currentYear, currentMonth - 1, currentDay - 1));
+      const y = targetDate.getUTCFullYear();
+      const m = targetDate.getUTCMonth() + 1;
+      const d = targetDate.getUTCDate();
+      return {
+        dateIso: formatIso(y, m, d),
+        dateDisplay: formatDisplay(d, m, y),
+        matchedText: 'hôm qua',
+      };
+    }
+
+    // 3. "ngày D tháng M" / "D tháng M"
+    const dayMonthTextMatch = lower.match(/\b(?:ngày\s+)?(\d{1,2})\s+(?:tháng|thg)\s+(\d{1,2})(?:\s+(?:năm\s+)?(\d{4}))?\b/i);
+    if (dayMonthTextMatch) {
+      const d = parseInt(dayMonthTextMatch[1], 10);
+      const m = parseInt(dayMonthTextMatch[2], 10);
+      let y = dayMonthTextMatch[3] ? parseInt(dayMonthTextMatch[3], 10) : currentYear;
+      if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+        return {
+          dateIso: formatIso(y, m, d),
+          dateDisplay: formatDisplay(d, m, y),
+          matchedText: dayMonthTextMatch[0],
+        };
+      }
+    }
+
+    // 4. "ngày DD/MM" / "ngày DD-MM" / "DD/MM/YYYY" / "DD/MM"
+    const dateMatch = lower.match(/\b(?:ngày\s+)?(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/i);
+    if (dateMatch) {
+      const d = parseInt(dateMatch[1], 10);
+      const m = parseInt(dateMatch[2], 10);
+      let y = currentYear;
+      if (dateMatch[3]) {
+        const yearParsed = parseInt(dateMatch[3], 10);
+        y = yearParsed < 100 ? 2000 + yearParsed : yearParsed;
+      }
+      if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+        return {
+          dateIso: formatIso(y, m, d),
+          dateDisplay: formatDisplay(d, m, y),
+          matchedText: dateMatch[0],
+        };
+      }
     }
 
     return null;
