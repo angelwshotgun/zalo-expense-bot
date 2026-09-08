@@ -95,6 +95,43 @@ export class ZaloBotService {
   }
 
   /**
+   * Định dạng danh sách danh mục thu & chi của shop
+   */
+  static buildCategoriesListText(categories: Category[]): string {
+    const incomeCats = categories.filter((c) => c.type === 'INCOME');
+    const expenseCats = categories.filter((c) => c.type === 'EXPENSE');
+
+    let msg = `📋 **DANH MỤC THU & CHI SHOP**\n━━━━━━━━━━━━━━━━━━\n`;
+
+    msg += `🌸 **DANH MỤC THU (BÁN HÀNG):**\n`;
+    if (incomeCats.length === 0) {
+      msg += `_(Chưa có mặt hàng nào)_\n`;
+    } else {
+      incomeCats.forEach((c, idx) => {
+        msg += `${idx + 1}. ${c.icon || '🌸'} **${c.name}**\n`;
+      });
+    }
+
+    msg += `\n💸 **DANH MỤC CHI (CHI PHÍ):**\n`;
+    if (expenseCats.length === 0) {
+      msg += `_(Chưa có khoản chi nào)_\n`;
+    } else {
+      expenseCats.forEach((c, idx) => {
+        msg += `${idx + 1}. ${c.icon || '💸'} **${c.name}**\n`;
+      });
+    }
+
+    msg += `\n━━━━━━━━━━━━━━━━━━\n`;
+    msg += `🔒 **Để thêm, sửa, hoặc xóa danh mục an toàn:**\n`;
+    msg += `👉 Chủ shop truy cập trang Quản Trị Web tại:\n`;
+    msg += `🌐 **https://zalo-expense-bot.onrender.com/admin**\n`;
+    msg += `_(Bảo vệ bằng mã PIN, an toàn tuyệt đối)_\n`;
+    msg += `💡 _Gõ **#help** để xem hướng dẫn ghi chép._`;
+
+    return msg;
+  }
+
+  /**
    * Định dạng câu hỏi làm rõ (Clarification)
    */
   static buildClarificationText(

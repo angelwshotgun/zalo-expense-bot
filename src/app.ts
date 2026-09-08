@@ -10,6 +10,7 @@ import { WebhookHandler } from './handlers/webhook.handler.js';
 import { ZaloBotHandler, ZaloBotWebhookBody } from './handlers/zalobot.handler.js';
 import { DatabaseService } from './services/db.service.js';
 import { ZaloWebhookPayload } from './types/index.js';
+import { renderAdminHtml } from './views/admin.view.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
@@ -51,24 +52,27 @@ export async function buildApp(): Promise<FastifyInstance> {
     };
   });
 
-  // 3.1. Route trang chủ hỗ trợ thẻ meta xác thực Zalo (Thẻ HTML Meta)
-  app.get('/', async (_request, reply) => {
+  const ADMIN_PIN = process.env.ADMIN_PIN || '123456';
+
+  // Helper xác thực quyền Admin qua PIN
+  const verifyAdmin = (request: any, reply: any): boolean => {
+    const pin = (request.headers['x-admin-pin'] as string) || (request.body as any)?.pin;
+    if (pin !== ADMIN_PIN) {
+      reply.status(401).send({ success: false, error: 'Mã PIN Admin không đúng hoặc đã hết hạn.' });
+      return false;
+    }
+    return true;
+  };
+
+  // 3.1. Route trang chủ và Admin Dashboard (Hỗ trợ thẻ meta xác thực Zalo & Web Quản Trị)
+  const serveAdminDashboard = async (_request: any, reply: any) => {
     const verificationCode = process.env.ZALO_VERIFICATION_CODE || 'QVdWARByTm8orje2nQPHBaIisIsesWDxDJ8u';
-    const html = `<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="zalo-platform-site-verification" content="${verificationCode}" />
-    <title>Zalo OA Expense Bot</title>
-</head>
-<body>
-    <h1>Zalo OA Expense Bot Service is Running</h1>
-    <p>Webhook endpoint: /webhook/zalo</p>
-    <p>Health check: /health</p>
-</body>
-</html>`;
+    const html = renderAdminHtml(verificationCode);
     return reply.type('text/html; charset=utf-8').send(html);
-  });
+  };
+
+  app.get('/', serveAdminDashboard);
+  app.get('/admin', serveAdminDashboard);
 
   // 3.2. Route phục vụ file xác thực Zalo (File HTML zalo_verifier*.html)
   app.get<{ Params: { filename: string } }>('/:filename', async (request, reply) => {
@@ -80,13 +84,79 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.status(404).send({ error: 'Not found' });
   });
 
-  // 4. Endpoint kiểm tra danh mục chuẩn
+  // 4.1. Endpoint xác thực mã PIN Admin
+  app.post('/api/admin/verify-pin', async (request, reply) => {
+    const body = request.body as any;
+    if (body?.pin === ADMIN_PIN) {
+      return reply.send({ success: true, message: 'Xác thực mã PIN thành công' });
+    }
+    return reply.status(401).send({ success: false, error: 'Mã PIN quản trị không chính xác' });
+  });
+
+  // 4.2. Endpoint lấy danh sách toàn bộ danh mục (Public / Read-only)
   app.get('/api/categories', async (_request, reply) => {
     try {
       const categories = await DatabaseService.getCategories();
       return reply.send({ success: true, count: categories.length, data: categories });
     } catch (error) {
       return reply.status(500).send({ success: false, error: (error as Error).message });
+    }
+  });
+
+  // 4.3. Endpoint thêm danh mục mới (Yêu cầu PIN Admin)
+  app.post('/api/categories', async (request, reply) => {
+    if (!verifyAdmin(request, reply)) return;
+    try {
+      const body = request.body as any;
+      if (!body?.name || !body.name.trim()) {
+        return reply.status(400).send({ success: false, error: 'Tên danh mục không được để trống.' });
+      }
+      const type = body.type === 'EXPENSE' ? 'EXPENSE' : 'INCOME';
+      const newCat = await DatabaseService.addCategory({
+        name: body.name.trim(),
+        type,
+        icon: body.icon?.trim(),
+      });
+      return reply.send({ success: true, data: newCat });
+    } catch (error) {
+      return reply.status(500).send({ success: false, error: (error as Error).message });
+    }
+  });
+
+  // 4.4. Endpoint cập nhật danh mục (Yêu cầu PIN Admin)
+  app.put<{ Params: { id: string } }>('/api/categories/:id', async (request, reply) => {
+    if (!verifyAdmin(request, reply)) return;
+    try {
+      const id = parseInt(request.params.id, 10);
+      const body = request.body as any;
+      const updated = await DatabaseService.updateCategory(id, {
+        name: body?.name,
+        icon: body?.icon,
+        type: body?.type,
+      });
+      if (!updated) {
+        return reply.status(404).send({ success: false, error: 'Không tìm thấy danh mục để cập nhật.' });
+      }
+      return reply.send({ success: true, data: updated });
+    } catch (error) {
+      return reply.status(500).send({ success: false, error: (error as Error).message });
+    }
+  });
+
+  // 4.5. Endpoint xóa danh mục an toàn (Yêu cầu PIN Admin, tự động chuyển giao dịch cũ sang Khác)
+  app.delete<{ Params: { id: string } }>('/api/categories/:id', async (request, reply) => {
+    if (!verifyAdmin(request, reply)) return;
+    try {
+      const id = parseInt(request.params.id, 10);
+      const result = await DatabaseService.deleteCategory(id);
+      const reassignNote = result.reassignedCount > 0 ? ` (${result.reassignedCount} giao dịch cũ đã được bảo toàn về danh mục "Khác")` : '';
+      return reply.send({
+        success: true,
+        message: `Đã xóa danh mục "${result.deleted.name}".${reassignNote}`,
+        data: result,
+      });
+    } catch (error: any) {
+      return reply.status(400).send({ success: false, error: error.message });
     }
   });
 

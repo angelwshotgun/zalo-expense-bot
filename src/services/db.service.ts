@@ -16,6 +16,16 @@ import {
   FinancialReport,
 } from '../types/index.js';
 
+// Hàm chuẩn hóa chuỗi tiếng Việt không dấu
+export function removeVietnameseTones(str: string): string {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D');
+}
+
 // Cache danh mục trong bộ nhớ RAM để tối ưu tốc độ và giảm tải DB
 let cachedCategories: Category[] | null = null;
 let lastCategoriesFetched = 0;
@@ -71,6 +81,126 @@ export class DatabaseService {
   }
 
   /**
+   * Xóa cache danh mục để làm mới tức thì
+   */
+  static clearCategoriesCache(): void {
+    cachedCategories = null;
+    lastCategoriesFetched = 0;
+  }
+
+  /**
+   * Thêm danh mục mới vào database
+   */
+  static async addCategory(data: {
+    name: string;
+    type: 'INCOME' | 'EXPENSE';
+    icon?: string;
+  }): Promise<Category> {
+    const supabase = getSupabaseClient();
+    const cleanName = data.name.trim();
+    if (!cleanName) {
+      throw new Error('Tên danh mục không được để trống');
+    }
+
+    const defaultIcon = data.type === 'INCOME' ? '🌸' : '💸';
+    const icon = data.icon?.trim() || defaultIcon;
+
+    const { data: newCat, error } = await supabase
+      .from('categories')
+      .insert({
+        name: cleanName,
+        type: data.type,
+        icon,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Lỗi khi thêm danh mục:', error);
+      throw error;
+    }
+
+    this.clearCategoriesCache();
+    return newCat as Category;
+  }
+
+  /**
+   * Cập nhật danh mục (đổi tên, icon, loại)
+   */
+  static async updateCategory(
+    id: number,
+    updates: { name?: string; icon?: string; type?: 'INCOME' | 'EXPENSE' }
+  ): Promise<Category | null> {
+    const supabase = getSupabaseClient();
+    const payload: any = {};
+    if (updates.name && updates.name.trim()) payload.name = updates.name.trim();
+    if (updates.icon && updates.icon.trim()) payload.icon = updates.icon.trim();
+    if (updates.type) payload.type = updates.type;
+
+    const { data, error } = await supabase
+      .from('categories')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Lỗi khi cập nhật danh mục:', error);
+      return null;
+    }
+
+    this.clearCategoriesCache();
+    return data as Category;
+  }
+
+  /**
+   * Xóa danh mục an toàn (chuyển các giao dịch cũ về danh mục 'Khác' để bảo toàn dữ liệu)
+   */
+  static async deleteCategory(id: number): Promise<{ deleted: Category; reassignedCount: number }> {
+    const supabase = getSupabaseClient();
+    const categories = await this.getCategories();
+    const targetCat = categories.find((c) => c.id === id);
+
+    if (!targetCat) {
+      throw new Error(`Không tìm thấy danh mục có ID ${id}`);
+    }
+
+    if (targetCat.name.toLowerCase() === 'khác') {
+      throw new Error('Không thể xóa danh mục mặc định "Khác"');
+    }
+
+    // Tìm danh mục Khác để làm fallback
+    let fallbackCat = categories.find((c) => c.name.toLowerCase() === 'khác');
+    if (!fallbackCat) {
+      fallbackCat = await this.addCategory({ name: 'Khác', type: 'EXPENSE', icon: '📦' });
+    }
+
+    // 1. Chuyển toàn bộ transactions đang trỏ về danh mục này sang fallbackCat.id
+    const { count, error: updateErr } = await supabase
+      .from('transactions')
+      .update({ category_id: fallbackCat.id }, { count: 'exact' })
+      .eq('category_id', id);
+
+    if (updateErr) {
+      console.warn('Lỗi khi chuyển category_id của giao dịch cũ:', updateErr.message);
+    }
+
+    // 2. Xóa danh mục
+    const { error: deleteErr } = await supabase
+      .from('categories')
+      .delete()
+      .eq('id', id);
+
+    if (deleteErr) {
+      console.error('Lỗi khi xóa category:', deleteErr);
+      throw deleteErr;
+    }
+
+    this.clearCategoriesCache();
+    return { deleted: targetCat, reassignedCount: count || 0 };
+  }
+
+  /**
    * Lấy danh sách danh mục chuẩn (có caching bộ nhớ)
    */
   static async getCategories(): Promise<Category[]> {
@@ -96,40 +226,21 @@ export class DatabaseService {
   }
 
   /**
-   * Khớp danh mục theo tên hoặc từ khóa (fuzzy match cơ bản trong Node, không tốn LLM)
+   * Khớp danh mục theo tên hoặc từ khóa (fuzzy match linh hoạt trong Node, không tốn LLM)
    */
   static async matchCategoryByName(categoryName: string, preferredType?: 'INCOME' | 'EXPENSE'): Promise<Category | null> {
     if (!categoryName) return null;
     const categories = await this.getCategories();
     const normalized = categoryName.trim().toLowerCase();
+    const stripped = removeVietnameseTones(normalized);
 
     // 1. Khớp theo số thứ tự (khi người dùng chọn 1, 2, 3...)
-    if (preferredType === 'EXPENSE') {
-      const expenseOrder = ['Nguyên vật liệu', 'Ship bưu cục', 'Ship hoả tốc', 'Khác'];
-      const numMatch = normalized.match(/^[#\s]*([1-4])\s*$/);
-      if (numMatch) {
-        const idx = parseInt(numMatch[1], 10) - 1;
-        const targetName = expenseOrder[idx];
-        const found = categories.find((c) => c.name.toLowerCase() === targetName.toLowerCase());
-        if (found) return found;
-      }
-    } else {
-      const incomeOrder = [
-        'Thư hoa',
-        'Huy chương',
-        'Tủ hoa',
-        'Thiệp lẻ',
-        'Khung ảnh',
-        'Cúp hoa',
-        'Móc khóa',
-        'Khác',
-      ];
-      const numMatch = normalized.match(/^[#\s]*([1-8])\s*$/);
-      if (numMatch) {
-        const idx = parseInt(numMatch[1], 10) - 1;
-        const targetName = incomeOrder[idx];
-        const found = categories.find((c) => c.name.toLowerCase() === targetName.toLowerCase());
-        if (found) return found;
+    const numMatch = normalized.match(/^[#\s]*(\d+)\s*$/);
+    if (numMatch) {
+      const idx = parseInt(numMatch[1], 10) - 1;
+      const filtered = preferredType ? categories.filter((c) => c.type === preferredType || c.name === 'Khác') : categories;
+      if (idx >= 0 && idx < filtered.length) {
+        return filtered[idx];
       }
     }
 
@@ -137,7 +248,21 @@ export class DatabaseService {
     const exact = categories.find((c) => c.name.toLowerCase() === normalized);
     if (exact) return exact;
 
-    // 3. Khớp theo từ khóa sản phẩm thực tế (cả Thu và Chi)
+    // 3. Khớp tên không dấu chính xác
+    const exactStripped = categories.find((c) => removeVietnameseTones(c.name.toLowerCase()) === stripped);
+    if (exactStripped) return exactStripped;
+
+    // 4. Khớp từ khóa chứa tên danh mục (ưu tiên danh mục tên dài hơn trước)
+    const sortedCats = [...categories].sort((a, b) => b.name.length - a.name.length);
+    for (const c of sortedCats) {
+      const catLower = c.name.toLowerCase();
+      const catStripped = removeVietnameseTones(catLower);
+      if (normalized.includes(catLower) || stripped.includes(catStripped)) {
+        return c;
+      }
+    }
+
+    // 5. Khớp theo từ khóa sản phẩm thực tế / chữ viết tắt
     const keywordMap: Array<{ name: string; keywords: string[] }> = [
       // THU (Bán hàng)
       { name: 'Thư hoa', keywords: ['thư hoa', 'thu hoa', 'bức thư hoa', 'bức thư'] },
@@ -157,7 +282,7 @@ export class DatabaseService {
 
     for (const item of keywordMap) {
       for (const kw of item.keywords) {
-        if (normalized.includes(kw)) {
+        if (normalized.includes(kw) || stripped.includes(removeVietnameseTones(kw))) {
           const found = categories.find((c) => c.name.toLowerCase() === item.name.toLowerCase());
           if (found) return found;
         }
