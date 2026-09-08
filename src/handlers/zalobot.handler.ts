@@ -153,13 +153,21 @@ export class ZaloBotHandler {
 
     const isReportCommand =
       lowerText === '#baocao' ||
+      lowerText === '/baocao' ||
       lowerText === '#baocaothu' ||
+      lowerText === '/baocaothu' ||
       lowerText === '#baocaochi' ||
+      lowerText === '/baocaochi' ||
       lowerText === '#baocao thangnay' ||
+      lowerText === '/baocao thangnay' ||
       lowerText === '#baocaothu thangnay' ||
+      lowerText === '/baocaothu thangnay' ||
       lowerText === '#baocaochi thangnay' ||
+      lowerText === '/baocaochi thangnay' ||
       lowerText === '#homnay' ||
+      lowerText === '/homnay' ||
       lowerText === '#thangnay' ||
+      lowerText === '/thangnay' ||
       lowerText === 'báo cáo' ||
       lowerText === 'baocao' ||
       lowerText === 'báo cáo hôm nay' ||
@@ -176,7 +184,8 @@ export class ZaloBotHandler {
       const isMonthly =
         lowerText.includes('thang') ||
         lowerText.includes('tháng') ||
-        lowerText === '#thangnay';
+        lowerText === '#thangnay' ||
+        lowerText === '/thangnay';
 
       let filterType: 'ALL' | 'INCOME' | 'EXPENSE' = 'ALL';
       if (lowerText.includes('thu') || lowerText.includes('doanh thu') || lowerText.includes('bán')) {
@@ -197,8 +206,11 @@ export class ZaloBotHandler {
     // Lệnh xem danh sách danh mục thu chi của shop
     const isCategoryCommand =
       lowerText === '#danhmuc' ||
+      lowerText === '/danhmuc' ||
       lowerText === '#danhmucthu' ||
+      lowerText === '/danhmucthu' ||
       lowerText === '#danhmucchi' ||
+      lowerText === '/danhmucchi' ||
       lowerText === 'danh mục' ||
       lowerText === 'danh muc' ||
       lowerText === 'xem danh mục' ||
@@ -214,7 +226,15 @@ export class ZaloBotHandler {
       return;
     }
 
-    if (lowerText === '#help' || lowerText === '#trogiup' || lowerText === 'trợ giúp') {
+    if (
+      lowerText === '#help' ||
+      lowerText === '/help' ||
+      lowerText === '#start' ||
+      lowerText === '/start' ||
+      lowerText === '#trogiup' ||
+      lowerText === '/trogiup' ||
+      lowerText === 'trợ giúp'
+    ) {
       const categories = await DatabaseService.getCategories();
       const incomeList = categories.filter((c) => c.type === 'INCOME').map((c) => c.name).join(' | ');
       const expenseList = categories.filter((c) => c.type === 'EXPENSE').map((c) => c.name).join(' | ');
@@ -227,22 +247,29 @@ export class ZaloBotHandler {
         `💸 **Khoản chi phí (CHI):**\n` +
         `${expenseList || 'Chưa có'}\n\n` +
         `⚡ **Ghi chép nhanh (< 0.1s):**\n` +
-        `• Bán hàng: "Tủ hoa 299k", "Móc khóa 50k", "+115k thư hoa"\n` +
-        `• Chi phí: "Nguyên vật liệu 500k", "Ship bưu cục 30k", "-200k tiền điện"\n` +
+        `• Bán hàng: "Tủ hoa 299k", "/móc khóa 50k", "+115k thư hoa"\n` +
+        `• Chi phí: "Nguyên vật liệu 500k", "/ship bưu cục 30k", "-200k tiền điện"\n` +
         `• Ghi lùi ngày: "Hôm qua tủ hoa 299k", "Ngày 02/09 thư hoa 115k"\n` +
         `• Gửi ảnh: Chụp hoặc gửi ảnh biên lai/chuyển khoản\n\n` +
-        `📊 **Lệnh tra cứu & Báo cáo:**\n` +
-        `• **#baocao** : Xem tổng hợp thu & chi hôm nay\n` +
-        `• **#baocaothu** : Xem riêng doanh thu bán hàng\n` +
-        `• **#baocaochi** : Xem riêng các khoản chi phí\n` +
-        `• **#danhmuc** : Xem toàn bộ danh mục của Shop\n` +
-        `• Thêm **thangnay** để xem theo tháng (VD: **#baocao thangnay**)\n\n` +
+        `📊 **Lệnh tra cứu & Báo cáo (Dùng / hoặc #):**\n` +
+        `• **/baocao** (hoặc **#baocao**): Xem tổng hợp hôm nay\n` +
+        `• **/baocaothu** : Xem riêng doanh thu bán hàng\n` +
+        `• **/baocaochi** : Xem riêng các khoản chi phí\n` +
+        `• **/danhmuc** : Xem danh mục cài đặt của Shop\n` +
+        `• **/xoa** : Xóa đơn hoặc khoản chi vừa ghi gần nhất\n` +
+        `• Thêm **thangnay** để xem theo tháng (VD: **/baocao thangnay**)\n\n` +
         `🌐 **Quản lý danh mục (Thêm/Sửa/Xóa):** https://zalo-expense-bot.onrender.com/admin`;
       await ZaloBotService.sendMessage(chatId, helpText);
       return;
     }
 
-    if (lowerText === 'hủy' || lowerText === 'hủy bỏ' || lowerText === '#huy') {
+    if (
+      lowerText === 'hủy' ||
+      lowerText === 'hủy bỏ' ||
+      lowerText === '#huy' ||
+      lowerText === '/huy' ||
+      lowerText === '/cancel'
+    ) {
       await DatabaseService.clearPendingClarification(user.id);
       await ZaloBotService.sendMessage(chatId, '👌 Đã hủy thao tác ghi nhận.');
       return;
@@ -1040,7 +1067,7 @@ export class ZaloBotHandler {
     description: string;
   } | null {
     if (!text) return null;
-    const raw = text.trim();
+    const raw = text.trim().replace(/^\/+\s*/, '');
     const lower = raw.toLowerCase();
     const stripped = removeVietnameseTones(lower);
 
@@ -1094,9 +1121,9 @@ export class ZaloBotHandler {
         { name: 'Cúp hoa', defaultType: 'INCOME', keywords: ['cúp hoa', 'cup hoa', 'cúp', 'cup'] },
         { name: 'Móc khóa', defaultType: 'INCOME', keywords: ['móc khóa', 'móc khoá', 'moc khoa', 'khoá', 'khóa'] },
         { name: 'Nguyên vật liệu', defaultType: 'EXPENSE', keywords: ['nguyên vật liệu', 'nguyen vat lieu', 'vật liệu', 'vat lieu', 'nguyên liệu', 'nguyen lieu', 'phụ liệu', 'phu lieu', 'mua đồ', 'mua do', 'mua hoa', 'hoa sáp', 'giấy gói', 'ruy băng', 'hộp hoa', 'keo nến', 'nvl'] },
-        { name: 'Ship bưu cục', defaultType: 'EXPENSE', keywords: ['ship bưu cục', 'ship buu cuc', 'bưu cục', 'buu cuc', 'gửi hàng', 'gui hang', 'viettel post', 'vnpost', 'ghtk', 'giao hàng tiết kiệm', 'bưu điện', 'buu dien', 'ship thường', 'chuyển phát'] },
+        { name: 'Ship bưu cục', defaultType: 'EXPENSE', keywords: ['ship bưu cục', 'ship buu cuc', 'bưu cục', 'buu cuc', 'gửi hàng', 'gui hang', 'viettel post', 'vnpost', 'ghtk', 'giao hàng tiết kiệm', 'bưu điện', 'buu dien', 'ship thường', 'chuyển phát', 'phí ship', 'phi ship', 'tiền ship', 'tien ship', 'ship'] },
         { name: 'Ship hoả tốc', defaultType: 'EXPENSE', keywords: ['ship hoả tốc', 'ship hỏa tốc', 'ship hoa toc', 'hoả tốc', 'hỏa tốc', 'hoa toc', 'grab', 'ahamove', 'giao gấp', 'ship gấp', 'lalamove', 'be delivery'] },
-        { name: 'Khác', defaultType: 'EXPENSE', keywords: ['khác', 'khac', 'chi phí', 'chi tieu', 'tiền ship'] },
+        { name: 'Khác', defaultType: 'EXPENSE', keywords: ['khác', 'khac', 'chi phí', 'chi tieu'] },
       ];
 
       for (const cat of builtInKeywords) {
