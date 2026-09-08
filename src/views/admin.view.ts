@@ -338,7 +338,9 @@ export function renderAdminHtml(verificationCode: string): string {
     .modal {
       background: white;
       width: 100%;
-      max-width: 440px;
+      max-width: 500px;
+      max-height: 90vh;
+      overflow-y: auto;
       border-radius: 20px;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
       padding: 24px;
@@ -412,27 +414,111 @@ export function renderAdminHtml(verificationCode: string): string {
       color: var(--expense);
     }
 
-    .emoji-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
+    /* Enhanced Emoji Picker */
+    .emoji-picker-container {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
       margin-top: 8px;
     }
-    .emoji-item {
-      width: 36px;
-      height: 36px;
+    .emoji-picker-header {
+      margin-bottom: 8px;
+    }
+    .emoji-search-input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      background: white;
+      outline: none;
+      box-sizing: border-box;
+      transition: border-color 0.2s;
+    }
+    .emoji-search-input:focus {
+      border-color: var(--primary);
+    }
+    .emoji-cat-tabs {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #e2e8f0;
+      scrollbar-width: thin;
+    }
+    .emoji-cat-tabs::-webkit-scrollbar {
+      height: 4px;
+    }
+    .emoji-cat-tabs::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    .emoji-cat-btn {
+      border: 1px solid var(--border);
+      background: white;
+      padding: 5px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .emoji-cat-btn:hover {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+    }
+    .emoji-cat-btn.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+    .emoji-grid-scroll {
+      max-height: 175px;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+      gap: 6px;
+      padding-right: 4px;
+      scrollbar-width: thin;
+    }
+    .emoji-grid-scroll::-webkit-scrollbar {
+      width: 5px;
+    }
+    .emoji-grid-scroll::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    .emoji-grid-item {
+      height: 38px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
+      font-size: 22px;
       border-radius: 8px;
-      border: 1px solid var(--border);
       cursor: pointer;
-      transition: transform 0.1s;
+      background: white;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+      user-select: none;
     }
-    .emoji-item:hover {
-      transform: scale(1.15);
-      background: #f1f5f9;
+    .emoji-grid-item:hover {
+      transform: scale(1.25);
+      background: #eef2ff;
+      border-color: #c7d2fe;
+      z-index: 2;
+    }
+    .emoji-grid-item.selected {
+      background: #e0e7ff;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 1px var(--primary);
+      transform: scale(1.1);
     }
 
     .modal-actions {
@@ -585,25 +671,11 @@ export function renderAdminHtml(verificationCode: string): string {
 
         <div class="form-group">
           <label class="form-label">Biểu tượng (Icon / Emoji):</label>
-          <input type="text" class="form-input" id="addIconInput" value="🌸" style="width: 80px; text-align: center; font-size: 20px;" maxlength="4" />
-          <div class="emoji-row" id="quickEmojis">
-            <span class="emoji-item" onclick="setEmoji('🌸')">🌸</span>
-            <span class="emoji-item" onclick="setEmoji('🪻')">🪻</span>
-            <span class="emoji-item" onclick="setEmoji('💐')">💐</span>
-            <span class="emoji-item" onclick="setEmoji('🌹')">🌹</span>
-            <span class="emoji-item" onclick="setEmoji('🏅')">🏅</span>
-            <span class="emoji-item" onclick="setEmoji('✉️')">✉️</span>
-            <span class="emoji-item" onclick="setEmoji('🖼️')">🖼️</span>
-            <span class="emoji-item" onclick="setEmoji('🏆')">🏆</span>
-            <span class="emoji-item" onclick="setEmoji('🔑')">🔑</span>
-            <span class="emoji-item" onclick="setEmoji('📦')">📦</span>
-            <span class="emoji-item" onclick="setEmoji('🧱')">🧱</span>
-            <span class="emoji-item" onclick="setEmoji('📮')">📮</span>
-            <span class="emoji-item" onclick="setEmoji('⚡')">⚡</span>
-            <span class="emoji-item" onclick="setEmoji('💡')">💡</span>
-            <span class="emoji-item" onclick="setEmoji('🏢')">🏢</span>
-            <span class="emoji-item" onclick="setEmoji('🛵')">🛵</span>
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+            <input type="text" class="form-input" id="addIconInput" value="🌸" style="width: 70px; text-align: center; font-size: 24px; padding: 6px;" maxlength="4" />
+            <span style="font-size: 13px; color: var(--text-muted);">Bấm emoji bên dưới hoặc dán emoji tùy ý</span>
           </div>
+          <div class="emoji-picker-container" id="addEmojiPicker"></div>
         </div>
 
         <div class="modal-actions">
@@ -627,7 +699,11 @@ export function renderAdminHtml(verificationCode: string): string {
         </div>
         <div class="form-group">
           <label class="form-label">Biểu tượng (Icon / Emoji):</label>
-          <input type="text" class="form-input" id="editIconInput" style="width: 80px; text-align: center; font-size: 20px;" maxlength="4" />
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+            <input type="text" class="form-input" id="editIconInput" style="width: 70px; text-align: center; font-size: 24px; padding: 6px;" maxlength="4" />
+            <span style="font-size: 13px; color: var(--text-muted);">Bấm emoji bên dưới hoặc dán emoji tùy ý</span>
+          </div>
+          <div class="emoji-picker-container" id="editEmojiPicker"></div>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-outline" onclick="closeModal('editModal')">Hủy</button>
@@ -753,6 +829,150 @@ export function renderAdminHtml(verificationCode: string): string {
       renderCategories();
     }
 
+    const EMOJI_GROUPS = [
+      {
+        name: 'Hoa & Cây',
+        icon: '🌸',
+        keywords: 'hoa flower bong hong tulip huong duong thien nhien cay la sen thao moc',
+        emojis: ['🌸', '🪻', '💐', '🌹', '🥀', '🌺', '🌻', '🌼', '🌷', '🪷', '🪴', '🌲', '🍀', '🌿', '🍃', '🌾', '🌱', '🎋', '🌵', '🌴']
+      },
+      {
+        name: 'Quà & Thủ công',
+        icon: '🎁',
+        keywords: 'qua gift ribbon no hop qua bong bay phao nen mau ve len moc tranh',
+        emojis: ['🎁', '🎀', '🧸', '🎈', '🎉', '🎊', '🎐', '🎏', '🪄', '🕯️', '🎨', '🧵', '🧶', '🪡', '🔮', '🖼️', '💌', '✉️', '🪆']
+      },
+      {
+        name: 'Phụ kiện & Giải',
+        icon: '🏅',
+        keywords: 'huy chuong medal cup trophy thuong khoa moc khoa key ring nhan kim cuong tui vi kinh non',
+        emojis: ['🏅', '🥇', '🥈', '🥉', '🏆', '🎖️', '🔑', '💍', '💎', '👑', '📿', '🕶️', '🎒', '👜', '👛', '⌚', '📸', '🔖', '👒', '🧣']
+      },
+      {
+        name: 'Đóng gói & Vật liệu',
+        icon: '📦',
+        keywords: 'hop box package dong goi boc hang vat lieu keo keo nen gach da go keo cat thuoc kep tag tem mac xop',
+        emojis: ['📦', '🛍️', '🏷️', '🧱', '🪵', '🪨', '✂️', '📏', '📎', '📌', '📍', '🗂️', '📐', '🧴', '🧰', '🧲', '🪜', '🔨', '🔧', '🪚', '🧻', '🧼', '🪣', '🛒', '🧪']
+      },
+      {
+        name: 'Vận chuyển',
+        icon: '🚚',
+        keywords: 'ship giao hang van chuyen buu dien buu cuc post viettel xe tai xe may grab aha hoa toc le fast bike car',
+        emojis: ['📮', '🚚', '🛵', '🚗', '🚲', '⚡', '✈️', '🚀', '🛴', '🛳️', '⛽', '🛣️', '🏃💨', '🗺️', '🚂', '🛞', '🅿️', '🏎️', '⛵', '🚤']
+      },
+      {
+        name: 'Tiền & Bán hàng',
+        icon: '💰',
+        keywords: 'tien money dollar vnd doanh thu gia ngan hang the bill hoa don atm pos loi nhuan',
+        emojis: ['💰', '💵', '💸', '💳', '🪙', '🏦', '🧾', '📈', '📉', '🏧', '💹', '📊', '🧧', '🤑', '💲']
+      },
+      {
+        name: 'Chi phí & Văn phòng',
+        icon: '🏢',
+        keywords: 'mat bang tien nha tien dien nuoc internet mang wifi may tinh laptop dt dien thoai may in don dep ve sinh thung rac',
+        emojis: ['🏢', '🏠', '💡', '⚡', '💧', '🔌', '📶', '💻', '📱', '☎️', '🖨️', '🧹', '🧺', '🧯', '🖥️', '⌨️', '🖱️', '🚪', '❄️', '🗑️', '🪑', '🛠️', '📻']
+      },
+      {
+        name: 'Ăn uống',
+        icon: '☕',
+        keywords: 'cafe ca phe tra sua tra an uong banh nuoc ngot com pizza tieu vat sinh hoat hoa qua trai cay',
+        emojis: ['☕', '🧋', '🍵', '🍰', '🥪', '🍜', '🍲', '🍱', '🍕', '🍔', '🍉', '🍊', '🧃', '🥤', '🍻', '🎂', '🍩', '🍫', '🍦', '🍇', '🍓', '🍎', '🥐', '🍙', '🍗', '🍟', '🍹']
+      },
+      {
+        name: 'Biểu tượng & Khác',
+        icon: '⭐',
+        keywords: 'sao star tim heart lua fire tron tick ok chuong thong bao lich ngay gio thoi gian',
+        emojis: ['⭐', '✨', '💖', '❤️', '🌟', '🎯', '⚙️', '🔒', '📝', '💬', '🔥', '💯', '✅', '📢', '🔔', '📅', '⏰', '🌈', '☀️', '🌙', '☘️', '🚩']
+      }
+    ];
+
+    function setupEmojiPicker(containerId, inputId) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+
+      let currentGroupIdx = 0;
+      let searchQuery = '';
+
+      function render() {
+        const currentSelected = document.getElementById(inputId).value.trim();
+
+        let displayEmojis = [];
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase().trim();
+          EMOJI_GROUPS.forEach(g => {
+            if (g.name.toLowerCase().includes(q) || g.keywords.toLowerCase().includes(q) || g.emojis.includes(q)) {
+              displayEmojis.push(...g.emojis);
+            }
+          });
+          displayEmojis = Array.from(new Set(displayEmojis));
+        } else if (currentGroupIdx === -1) {
+          EMOJI_GROUPS.forEach(g => displayEmojis.push(...g.emojis));
+          displayEmojis = Array.from(new Set(displayEmojis));
+        } else {
+          displayEmojis = EMOJI_GROUPS[currentGroupIdx] ? EMOJI_GROUPS[currentGroupIdx].emojis : [];
+        }
+
+        const totalCount = Array.from(new Set(EMOJI_GROUPS.flatMap(g => g.emojis))).length;
+
+        const headerHtml = \`
+          <div class="emoji-picker-header">
+            <input type="text" 
+                   class="emoji-search-input" 
+                   placeholder="🔍 Tìm emoji (ví dụ: hoa, quà, ship, tiền, điện, cafe...)" 
+                   value="\${escapeHtml(searchQuery)}" 
+                   oninput="window['searchEmoji_\${containerId}'](this.value)" />
+          </div>
+          <div class="emoji-cat-tabs">
+            <button type="button" 
+                    class="emoji-cat-btn \${currentGroupIdx === -1 && !searchQuery ? 'active' : ''}" 
+                    onclick="window['changeEmojiGroup_\${containerId}'](-1)">
+              🌟 Tất cả (\${totalCount})
+            </button>
+            \${EMOJI_GROUPS.map((g, idx) => \`
+              <button type="button" 
+                      class="emoji-cat-btn \${currentGroupIdx === idx && !searchQuery ? 'active' : ''}" 
+                      onclick="window['changeEmojiGroup_\${containerId}'](\${idx})">
+                \${g.icon} \${g.name}
+              </button>
+            \`).join('')}
+          </div>
+        \`;
+
+        const gridHtml = \`
+          <div class="emoji-grid-scroll">
+            \${displayEmojis.length > 0 ? displayEmojis.map(emoji => \`
+              <div class="emoji-grid-item \${emoji === currentSelected ? 'selected' : ''}" 
+                   onclick="window['selectEmoji_\${containerId}']('\${emoji}')" 
+                   title="\${emoji}">
+                \${emoji}
+              </div>
+            \`).join('') : '<div style="grid-column: 1 / -1; padding: 12px; font-size: 13px; color: var(--text-muted); text-align: center;">Không tìm thấy emoji nào phù hợp.</div>'}
+          </div>
+        \`;
+
+        container.innerHTML = headerHtml + gridHtml;
+      }
+
+      window[\`changeEmojiGroup_\${containerId}\`] = function(idx) {
+        currentGroupIdx = idx;
+        searchQuery = '';
+        render();
+      };
+
+      window[\`searchEmoji_\${containerId}\`] = function(q) {
+        searchQuery = q;
+        render();
+      };
+
+      window[\`selectEmoji_\${containerId}\`] = function(emoji) {
+        const input = document.getElementById(inputId);
+        input.value = emoji;
+        render();
+      };
+
+      render();
+    }
+
     function selectType(type) {
       selectedType = type;
       const incomeOpt = document.getElementById('typeIncomeOpt');
@@ -762,16 +982,18 @@ export function renderAdminHtml(verificationCode: string): string {
       if (type === 'INCOME') {
         incomeOpt.className = 'type-opt selected-income';
         expenseOpt.className = 'type-opt';
-        if (iconInput.value === '💸') iconInput.value = '🌸';
+        if (iconInput.value === '💸') {
+          iconInput.value = '🌸';
+          setupEmojiPicker('addEmojiPicker', 'addIconInput');
+        }
       } else {
         expenseOpt.className = 'type-opt selected-expense';
         incomeOpt.className = 'type-opt';
-        if (iconInput.value === '🌸') iconInput.value = '💸';
+        if (iconInput.value === '🌸') {
+          iconInput.value = '💸';
+          setupEmojiPicker('addEmojiPicker', 'addIconInput');
+        }
       }
-    }
-
-    function setEmoji(emoji) {
-      document.getElementById('addIconInput').value = emoji;
     }
 
     // Modal helpers
@@ -819,14 +1041,16 @@ export function renderAdminHtml(verificationCode: string): string {
     function openAddModal() {
       if (!checkAuthRequired()) return;
       document.getElementById('addNameInput').value = '';
+      document.getElementById('addIconInput').value = '🌸';
       selectType('INCOME');
+      setupEmojiPicker('addEmojiPicker', 'addIconInput');
       openModal('addModal');
     }
 
     async function handleAddSubmit(e) {
       e.preventDefault();
       const name = document.getElementById('addNameInput').value.trim();
-      const icon = document.getElementById('addIconInput').value.trim();
+      const icon = document.getElementById('addIconInput').value.trim() || (selectedType === 'INCOME' ? '🌸' : '💸');
       if (!name) return;
 
       try {
@@ -858,7 +1082,8 @@ export function renderAdminHtml(verificationCode: string): string {
       if (!checkAuthRequired()) return;
       document.getElementById('editId').value = id;
       document.getElementById('editNameInput').value = name;
-      document.getElementById('editIconInput').value = icon;
+      document.getElementById('editIconInput').value = icon || '🌸';
+      setupEmojiPicker('editEmojiPicker', 'editIconInput');
       openModal('editModal');
     }
 
