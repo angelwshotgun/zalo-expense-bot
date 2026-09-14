@@ -1112,6 +1112,7 @@ export function renderAdminHtml(verificationCode: string): string {
     async function init() {
       updateAuthUI();
       await fetchCategories();
+      await fetchAccounts();
       await fetchTransactions();
     }
 
@@ -1132,7 +1133,7 @@ export function renderAdminHtml(verificationCode: string): string {
     function populateAccountFilter() {
       const select = document.getElementById('txAccountFilter');
       if (!select) return;
-      const currentVal = select.value || 'ALL';
+      const currentVal = txCurrentUserId || select.value || 'ALL';
       select.innerHTML = '<option value="ALL">👥 Tất cả Sổ / Nhóm</option>';
       for (const acc of accounts) {
         const icon = acc.is_group ? '👥' : (acc.zalo_user_id === 'admin_web' ? '👑' : '👤');
@@ -1171,6 +1172,7 @@ export function renderAdminHtml(verificationCode: string): string {
         tabCategories.classList.remove('active');
         viewTransactions.style.display = 'block';
         viewCategories.style.display = 'none';
+        fetchAccounts();
         fetchTransactions();
       } else {
         tabTransactions.classList.remove('active');
@@ -1299,10 +1301,22 @@ export function renderAdminHtml(verificationCode: string): string {
         const catIcon = tx.category?.icon || (isIncome ? '🌸' : '💸');
         const source = tx.raw_input?.includes('Web Admin') ? '🌐 Web Admin' : '🤖 Zalo Bot';
 
+        const userObj = Array.isArray(tx.user) ? tx.user[0] : tx.user;
+        const isGrp = userObj?.zalo_user_id ? userObj.zalo_user_id.startsWith('group_') : false;
+        const isAdminWeb = userObj?.zalo_user_id === 'admin_web';
+        let acctLabel = userObj?.display_name || (isGrp ? 'Nhóm Shop' : (isAdminWeb ? 'Chủ Shop' : 'Cá nhân'));
+        const acctBadge = isGrp ? '👥 ' + escapeHtml(acctLabel) : (isAdminWeb ? '👑 ' + escapeHtml(acctLabel) : '👤 ' + escapeHtml(acctLabel));
+        const acctStyle = isGrp ? 'background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;' : (isAdminWeb ? 'background: #fef3c7; color: #b45309; border: 1px solid #fde68a;' : 'background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb;');
+
         return \`
           <tr>
             <td style="white-space: nowrap; font-size: 13px; color: var(--text-muted);">
               \${formatDateTime(tx.transaction_date || tx.created_at)}
+            </td>
+            <td style="white-space: nowrap;">
+              <span style="font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 6px; \${acctStyle}" title="\${escapeHtml(userObj?.zalo_user_id || '')}">
+                \${acctBadge}
+              </span>
             </td>
             <td>
               <span class="tx-badge \${badgeClass}">\${badgeText}</span>
@@ -1390,6 +1404,8 @@ export function renderAdminHtml(verificationCode: string): string {
       document.getElementById('txAddAmountPreview').innerText = '';
       document.getElementById('txAddDescription').value = '';
       document.getElementById('txAddDate').value = toLocalIsoString(new Date());
+      const addAcc = document.getElementById('txAddAccount');
+      if (addAcc) addAcc.value = (txCurrentUserId && txCurrentUserId !== 'ALL' ? txCurrentUserId : '');
       selectTxAddType('INCOME');
       openModal('addTxModal');
     }
@@ -1415,6 +1431,7 @@ export function renderAdminHtml(verificationCode: string): string {
       const description = document.getElementById('txAddDescription').value.trim();
       const dateVal = document.getElementById('txAddDate').value;
       const transaction_date = dateVal ? new Date(dateVal).toISOString() : new Date().toISOString();
+      const account_user_id = document.getElementById('txAddAccount')?.value || null;
 
       try {
         const res = await fetch('/api/transactions', {
@@ -1428,7 +1445,8 @@ export function renderAdminHtml(verificationCode: string): string {
             category_id: category_id ? parseInt(category_id, 10) : null,
             transaction_type: txAddSelectedType,
             description,
-            transaction_date
+            transaction_date,
+            user_id: account_user_id || undefined
           })
         });
         const data = await res.json();
