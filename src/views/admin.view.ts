@@ -334,6 +334,7 @@ export function renderAdminHtml(verificationCode: string): string {
       font-weight: 600;
       padding: 3px 8px;
       border-radius: 9999px;
+      white-space: nowrap;
     }
     .tx-badge-income {
       background: var(--income-bg);
@@ -348,11 +349,13 @@ export function renderAdminHtml(verificationCode: string): string {
       color: var(--income);
       font-weight: 700;
       font-size: 15px;
+      white-space: nowrap;
     }
     .amount-expense {
       color: var(--expense);
       font-weight: 700;
       font-size: 15px;
+      white-space: nowrap;
     }
 
     /* Categories Grid */
@@ -765,14 +768,14 @@ export function renderAdminHtml(verificationCode: string): string {
         <table class="data-table">
           <thead>
             <tr>
-              <th>Thời Gian</th>
-              <th>Tài Khoản / Sổ</th>
-              <th>Loại</th>
-              <th>Danh Mục</th>
+              <th style="white-space: nowrap;">Thời Gian</th>
+              <th style="white-space: nowrap;">Tài Khoản / Sổ</th>
+              <th style="white-space: nowrap;">Loại</th>
+              <th style="white-space: nowrap;">Danh Mục</th>
               <th>Mặt Hàng / Nội Dung</th>
-              <th>Số Tiền</th>
-              <th>Nguồn Tạo</th>
-              <th style="text-align: right;">Hành Động</th>
+              <th style="white-space: nowrap;">Số Tiền</th>
+              <th style="white-space: nowrap;">Nguồn Tạo</th>
+              <th style="text-align: right; white-space: nowrap;">Hành Động</th>
             </tr>
           </thead>
           <tbody id="transactionsTbody">
@@ -1140,9 +1143,10 @@ export function renderAdminHtml(verificationCode: string): string {
         if (!acc.tx_count || acc.tx_count <= 0) {
           continue;
         }
+        const cleanName = (acc.display_name || '').replace(/\s*\((?:zgr-|group_)[^)]*\)/gi, '').trim() || (acc.is_group ? 'Nhóm Shop' : 'Cá nhân');
         const icon = acc.is_group ? '👥' : (acc.zalo_user_id === 'admin_web' ? '👑' : '👤');
         const countStr = acc.tx_count !== undefined ? \` (\${acc.tx_count} đơn)\` : '';
-        select.innerHTML += \`<option value="\${acc.id}">\${icon} \${escapeHtml(acc.display_name)}\${countStr}</option>\`;
+        select.innerHTML += \`<option value="\${acc.id}">\${icon} \${escapeHtml(cleanName)}\${countStr}</option>\`;
       }
       select.value = currentVal;
       if (select.value !== currentVal) {
@@ -1160,8 +1164,9 @@ export function renderAdminHtml(verificationCode: string): string {
         if (!acc.tx_count || acc.tx_count <= 0) {
           continue;
         }
+        const cleanName = (acc.display_name || '').replace(/\s*\((?:zgr-|group_)[^)]*\)/gi, '').trim() || (acc.is_group ? 'Nhóm Shop' : 'Cá nhân');
         const icon = acc.is_group ? '👥' : (acc.zalo_user_id === 'admin_web' ? '👑' : '👤');
-        select.innerHTML += \`<option value="\${acc.id}">\${icon} \${escapeHtml(acc.display_name)}</option>\`;
+        select.innerHTML += \`<option value="\${acc.id}">\${icon} \${escapeHtml(cleanName)}</option>\`;
       }
     }
 
@@ -1317,7 +1322,27 @@ export function renderAdminHtml(verificationCode: string): string {
         const userObj = Array.isArray(tx.user) ? tx.user[0] : tx.user;
         const isGrp = userObj?.zalo_user_id ? userObj.zalo_user_id.startsWith('group_') : false;
         const isAdminWeb = userObj?.zalo_user_id === 'admin_web';
-        let acctLabel = userObj?.display_name || (isGrp ? 'Nhóm Shop' : (isAdminWeb ? 'Chủ Shop' : 'Cá nhân'));
+        let rawAcctName = userObj?.display_name || (isGrp ? 'Nhóm Shop' : (isAdminWeb ? 'Chủ Shop' : 'Cá nhân'));
+
+        // Làm sạch mã ID nhóm rườm rà (zgr-..., group_...) để tránh dài quá vỡ form
+        let cleanAcctName = rawAcctName.replace(/\s*\((?:zgr-|group_)[^)]*\)/gi, '').trim();
+        if (!cleanAcctName) cleanAcctName = isGrp ? 'Nhóm Shop' : 'Cá nhân';
+
+        // Trích xuất tên người yêu cầu nếu có trong raw_input dạng [Tên] ...
+        const rawInputStr = tx.raw_input || '';
+        let requester = null;
+        let displayRawInput = rawInputStr;
+        const requesterMatch = rawInputStr.match(/^\[(.*?)\]\s*(.*)$/);
+        if (requesterMatch) {
+          requester = requesterMatch[1].trim();
+          displayRawInput = requesterMatch[2].trim();
+        }
+
+        let acctLabel = cleanAcctName;
+        if (isGrp && requester) {
+          acctLabel = \`\${cleanAcctName} (\${requester})\`;
+        }
+
         const acctBadge = isGrp ? '👥 ' + escapeHtml(acctLabel) : (isAdminWeb ? '👑 ' + escapeHtml(acctLabel) : '👤 ' + escapeHtml(acctLabel));
         const acctStyle = isGrp ? 'background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;' : (isAdminWeb ? 'background: #fef3c7; color: #b45309; border: 1px solid #fde68a;' : 'background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb;');
 
@@ -1327,24 +1352,24 @@ export function renderAdminHtml(verificationCode: string): string {
               \${formatDateTime(tx.transaction_date || tx.created_at)}
             </td>
             <td style="white-space: nowrap;">
-              <span style="font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 6px; \${acctStyle}" title="\${escapeHtml(userObj?.zalo_user_id || '')}">
+              <span style="display: inline-block; max-width: 175px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 6px; \${acctStyle}" title="\${escapeHtml(rawAcctName)}\${requester ? ' • Người yêu cầu: ' + escapeHtml(requester) : ''}">
                 \${acctBadge}
               </span>
             </td>
-            <td>
+            <td style="white-space: nowrap;">
               <span class="tx-badge \${badgeClass}">\${badgeText}</span>
             </td>
-            <td>
+            <td style="white-space: nowrap;">
               <strong>\${catIcon} \${escapeHtml(catName)}</strong>
             </td>
             <td>
               <div style="font-weight: 500;">\${escapeHtml(tx.description || catName)}</div>
-              \${tx.raw_input && !tx.raw_input.includes('Web Admin') ? \`<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">\${escapeHtml(tx.raw_input)}</div>\` : ''}
+              \${displayRawInput && !displayRawInput.includes('Web Admin') ? \`<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">\${escapeHtml(displayRawInput)}</div>\` : ''}
             </td>
-            <td>
+            <td style="white-space: nowrap;">
               <span class="\${amountClass}">\${amountPrefix}\${formatVND(tx.amount)}</span>
             </td>
-            <td style="font-size: 12px; color: var(--text-muted);">
+            <td style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">
               \${source}
             </td>
             <td style="text-align: right; white-space: nowrap;">

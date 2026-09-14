@@ -139,6 +139,18 @@ assert(activeAccounts.some(a => a.id === 'acc-4'), 'Chủ Shop (12 đơn) phải
 assert(!activeAccounts.some(a => a.id === 'acc-2'), 'Nhóm Rỗng (0 đơn) phải bị ẩn đi');
 assert(!activeAccounts.some(a => a.id === 'acc-3'), 'Khách vãng lai (undefined đơn) phải bị ẩn đi');
 
+// TEST 5: Làm sạch tên nhóm và trích xuất người yêu cầu (tránh vỡ form)
+console.log('\n--- TEST 5: Làm sạch tên nhóm & trích xuất người yêu cầu ---');
+const rawGroupName = 'Nhóm Shop (zgr-ca6e5e02fa6e13304a7f)';
+const cleanGroupName = rawGroupName.replace(/\s*\((?:zgr-|group_)[^)]*\)/gi, '').trim();
+assert(cleanGroupName === 'Nhóm Shop', 'Phải làm sạch mã hash zgr- thành "Nhóm Shop"');
+
+const rawInputWithSender = '[Huyền Trang] +229k combo 3 món';
+const matchSender = rawInputWithSender.match(/^\[(.*?)\]\s*(.*)$/);
+assert(matchSender !== null, 'Phải trích xuất được người yêu cầu từ raw_input');
+assert(matchSender![1] === 'Huyền Trang', 'Tên người yêu cầu phải là "Huyền Trang"');
+assert(matchSender![2] === '+229k combo 3 món', 'Nội dung raw_input sạch phải là "+229k combo 3 món"');
+
 console.log('\n===============================================================');
 console.log(`🏁 KẾT QUẢ: ${passCount} PASS, ${failCount} FAIL`);
 console.log('===============================================================');

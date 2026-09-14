@@ -826,11 +826,11 @@ export class DatabaseService {
 
     let accounts = (usersData || []).map((u) => {
       const isGroup = u.zalo_user_id?.startsWith('group_');
-      let name = u.display_name;
+      let name = (u.display_name || '').replace(/\s*\((?:zgr-|group_)[^)]*\)/gi, '').trim();
       if (!name) {
         name = isGroup
-          ? `Nhóm Chat (${u.zalo_user_id.replace('group_', '')})`
-          : (u.zalo_user_id === 'admin_web' ? 'Chủ Shop (Web Admin)' : `Cá nhân (${u.zalo_user_id})`);
+          ? 'Nhóm Shop'
+          : (u.zalo_user_id === 'admin_web' ? 'Chủ Shop' : `Cá nhân (${u.zalo_user_id})`);
       }
       return {
         id: u.id,

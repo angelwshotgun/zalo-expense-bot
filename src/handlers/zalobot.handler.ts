@@ -157,7 +157,18 @@ export class ZaloBotHandler {
     // Nếu là nhóm chat: sử dụng ID nhóm làm sổ thu chi chung (Group Shared Ledger) cho cả shop
     // Nếu là chat riêng 1-1: sử dụng ID cá nhân người gửi
     const targetZaloId = isGroup ? `group_${chatId}` : senderId;
-    const targetName = isGroup ? (anyChat?.title || anyChat?.name || `Nhóm Shop (${chatId})`) : senderName;
+    const targetName = isGroup ? (anyChat?.title || anyChat?.name || 'Nhóm Shop') : senderName;
+
+    // Helper lưu tên người yêu cầu trong nhóm chat vào raw_input dạng [Tên] ...
+    const formatRawInput = (text: string | null | undefined): string | null => {
+      if (!text) return null;
+      if (isGroup && senderName) {
+        if (!text.startsWith(`[${senderName}]`)) {
+          return `[${senderName}] ${text}`;
+        }
+      }
+      return text;
+    };
 
     console.log(`\n🤖 [Zalo Bot: ${result.event_name}] Từ: ${senderName} (${senderId}) - Chat: ${chatId} (${isGroup ? 'NHÓM CHUNG' : 'CHAT RIÊNG'})${photoUrl ? ' [KÈM ẢNH]' : ''}`);
 
@@ -627,7 +638,7 @@ export class ZaloBotHandler {
               category_id: catId,
               transaction_type: draft.transaction_type || 'INCOME',
               description: finalDesc,
-              raw_input: `${draft.raw_input || ''} -> ${userText}`,
+              raw_input: formatRawInput(`${draft.raw_input || ''} -> ${userText}`),
               image_url: draft.image_url,
               transaction_date: finalTxDate,
             });
@@ -666,7 +677,7 @@ export class ZaloBotHandler {
             category_id: finalCat?.id,
             transaction_type: draft.transaction_type || 'INCOME',
             description: note || finalCat?.name || 'Ghi chép',
-            raw_input: `${draft.raw_input || ''} -> ${userText}`,
+            raw_input: formatRawInput(`${draft.raw_input || ''} -> ${userText}`),
             image_url: draft.image_url,
             transaction_date: draft.transaction_date || new Date().toISOString(),
           });
@@ -694,7 +705,7 @@ export class ZaloBotHandler {
               category_id: matchedCat?.id,
               transaction_type: resolvedType,
               description: draft.description || draft.note || matchedCat?.name || 'Ghi chép',
-              raw_input: `${draft.raw_input || ''} -> ${userText}`,
+              raw_input: formatRawInput(`${draft.raw_input || ''} -> ${userText}`),
               image_url: draft.image_url,
               transaction_date: draft.transaction_date || new Date().toISOString(),
             });
@@ -751,7 +762,7 @@ export class ZaloBotHandler {
           category_id: matchedCategory?.id,
           transaction_type: quickParsed.transaction_type,
           description: quickParsed.description || matchedCategory?.name,
-          raw_input: userText,
+          raw_input: formatRawInput(userText),
           transaction_date: txDate,
         });
 
@@ -880,7 +891,7 @@ export class ZaloBotHandler {
             category_id: matchedCat.id,
             transaction_type: matchedCat.type || pending.partial_transaction.transaction_type || 'INCOME',
             description: pending.partial_transaction.description || userText || matchedCat.name,
-            raw_input: `${pending.partial_transaction.raw_input || ''} + ${userText}`,
+            raw_input: formatRawInput(`${pending.partial_transaction.raw_input || ''} + ${userText}`),
             image_url: pending.partial_transaction.image_url,
             transaction_date: finalDate,
           });
@@ -908,7 +919,7 @@ export class ZaloBotHandler {
             category_id: cat?.id,
             transaction_type: pending.partial_transaction.transaction_type || cat?.type || 'INCOME',
             description: pending.partial_transaction.description || userText,
-            raw_input: `${pending.partial_transaction.raw_input || ''} + ${userText}`,
+            raw_input: formatRawInput(`${pending.partial_transaction.raw_input || ''} + ${userText}`),
             image_url: pending.partial_transaction.image_url,
             transaction_date: finalDate,
           });
@@ -1055,7 +1066,7 @@ export class ZaloBotHandler {
           category_id: matchedCategory?.id,
           transaction_type: extraction.transaction.type || 'INCOME',
           description: effectiveDesc || matchedCategory?.name,
-          raw_input: `${userText || '[Ảnh biên lai]'} ${hasRecent ? `+ ${recent.text}` : ''}`.trim(),
+          raw_input: formatRawInput(`${userText || '[Ảnh biên lai]'} ${hasRecent ? `+ ${recent.text}` : ''}`.trim()),
           image_url: photoUrl,
           transaction_date: extraction.transaction.transaction_date || new Date().toISOString(),
         });
@@ -1136,7 +1147,7 @@ export class ZaloBotHandler {
           category_id: matchedCategory?.id,
           transaction_type: extraction.transaction.type || matchedCategory?.type || 'EXPENSE',
           description: extraction.transaction.description || userText || matchedCategory?.name,
-          raw_input: userText || '[Ảnh hóa đơn/chuyển khoản]',
+          raw_input: formatRawInput(userText || '[Ảnh hóa đơn/chuyển khoản]'),
           image_url: photoUrl,
           transaction_date: finalTxDate,
         });
