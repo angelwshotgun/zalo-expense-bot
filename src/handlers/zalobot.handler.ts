@@ -147,7 +147,12 @@ export class ZaloBotHandler {
 
     // Xác định chat riêng hay chat nhóm
     const anyChat = msg.chat as any;
-    const isGroup = anyChat?.chat_type === '2' || anyChat?.chat_type === 2 || String(chatId) !== String(senderId);
+    const isGroup =
+      anyChat?.chat_type === 'GROUP' ||
+      anyChat?.chat_type === 'group' ||
+      anyChat?.chat_type === '2' ||
+      anyChat?.chat_type === 2 ||
+      Boolean(chatId && senderId && String(chatId) !== String(senderId));
 
     // Nếu là nhóm chat: sử dụng ID nhóm làm sổ thu chi chung (Group Shared Ledger) cho cả shop
     // Nếu là chat riêng 1-1: sử dụng ID cá nhân người gửi
@@ -1056,7 +1061,7 @@ export class ZaloBotHandler {
         });
 
         await DatabaseService.clearPendingClarification(user.id);
-        const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name);
+        const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name, isGroup ? senderName : undefined);
         await ZaloBotService.sendMessage(chatId, successMsg);
         return;
       }

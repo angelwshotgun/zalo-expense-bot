@@ -1,6 +1,7 @@
 ================================================================================
           HƯỚNG DẪN SỬ DỤNG BOT QUẢN LÝ THU & CHI TIÊU TRÊN ZALO
                  Dành cho Chủ Shop & Nhân viên Shop Hoa Sáp
+          Website Quản Trị: https://zalo-expense-bot.onrender.com/admin
 ================================================================================
 
 I. BẢNG DANH MỤC CHUẨN CỦA SHOP
@@ -9,13 +10,13 @@ I. BẢNG DANH MỤC CHUẨN CỦA SHOP
 --------------------------------------------------------------------------------
 STT  | MẶT HÀNG      | ICON | VÍ DỤ TIN NHẮN GHI NHẬN
 --------------------------------------------------------------------------------
-1    | Thư hoa       | ✉️   | Thư hoa 115k, +115k thư hoa
-2    | Huy chương    | 🏅   | Huy chương 85k, +85k huy chuong
-3    | Tủ hoa        | 🪞   | Tủ hoa 299k, tu hoa 350k
-4    | Thiệp lẻ      | 💌   | Thiệp lẻ 25k, thiep le 30k
-5    | Khung ảnh     | 🖼️   | Khung ảnh 180k, khung anh 220k
-6    | Cúp hoa       | 🏆   | Cúp hoa 450k, cup hoa 500k
-7    | Móc khóa      | 🔑   | Móc khóa 50k, moc khoa 45k
+1    | Thư hoa       | ✉️   | + Thư hoa 115k, + 115k thư hoa, Thư hoa +115k
+2    | Huy chương    | 🏅   | + Huy chương 85k, Huy chương 85k
+3    | Tủ hoa        | 🪞   | + Tủ hoa 299k, Tu hoa 350k
+4    | Thiệp lẻ      | 💌   | + Thiệp lẻ 25k, thiep le 30k
+5    | Khung ảnh     | 🖼️   | + Khung ảnh 180k, khung anh 220k
+6    | Cúp hoa       | 🏆   | + Cúp hoa 450k, cup hoa 500k
+7    | Móc khóa      | 🔑   | + Móc khóa 50k, moc khoa 45k
 8    | Khác          | 📦   | Bán các sản phẩm hoa sáp ngoài danh mục trên
 --------------------------------------------------------------------------------
 
@@ -24,54 +25,64 @@ STT  | MẶT HÀNG      | ICON | VÍ DỤ TIN NHẮN GHI NHẬN
 STT  | KHOẢN CHI       | ICON | MỤC ĐÍCH & VÍ DỤ
 --------------------------------------------------------------------------------
 1    | Nguyên vật liệu | 🧱   | Hoa sáp, ruy băng, xốp cắm, hộp mica, keo nến
-     |                 |      | VD: "Nguyên vật liệu 500k", "mua hoa sáp 1tr2"
+     |                 |      | VD: "- Nguyên vật liệu 500k", "mua hoa sáp 1tr2"
 2    | Ship bưu cục    | 📮   | Gửi bưu điện, VNPost, Viettel Post, GHTK, ship chậm
-     |                 |      | VD: "Ship bưu cục 30k", "gửi bưu điện 45k"
+     |                 |      | VD: "- Ship bưu cục 30k", "gửi bưu điện 45k"
 3    | Ship hoả tốc    | ⚡   | Grab, Ahamove, Be, Lalamove giao trong ngày
-     |                 |      | VD: "Ship hoả tốc 45k", "grab giao hoa 60k"
+     |                 |      | VD: "- Ship hoả tốc 45k", "grab giao hoa 60k"
 4    | Khác            | 💸   | Tiền ăn uống, tiền điện, mặt bằng, sinh hoạt
-     |                 |      | VD: "-200k tiền điện", "ăn trưa 45k"
+     |                 |      | VD: "- Tiền điện 500k", "-200k tiền điện", "ăn trưa 45k"
 --------------------------------------------------------------------------------
 
 ================================================================================
-II. HƯỚNG DẪN GHI CHÉP NHANH (< 0.1 GIÂY)
+II. HƯỚNG DẪN GHI CHÉP THEO QUY TẮC LINH HOẠT (RULE-BASED)
 ================================================================================
 
-1. GHI ĐƠN BÁN HÀNG:
-   Nhắn tin theo cú pháp: [Tên sản phẩm] + [Số tiền]
+1. GHI ĐƠN BÁN HÀNG (THU NHẬP):
+   Cú pháp chuẩn: + [Tên mặt hàng] [Số tiền] [Lý do / Tên khách / Ghi chú]
    Ví dụ:
-   • Tủ hoa 299k
-   • Thư hoa 115k
-   • Móc khóa 50k
-   • +115k thư hoa
-   • Bán 2 khung ảnh 360k
+   • + Thư hoa 115k khách hàng Abc  -> Lưu 115.000đ, Mục: Thư hoa, Ghi chú: "khách hàng Abc"
+   • + Tủ hoa 299k cọc trước 100k    -> Lưu 299.000đ, Mục: Tủ hoa, Ghi chú: "cọc trước 100k"
+   • + 115k thư hoa                  -> Lưu 115.000đ, Mục: Thư hoa
+   • Bán 2 khung ảnh 360k            -> Lưu 360.000đ, Mục: Khung ảnh
 
-2. GHI KHOẢN CHI TIÊU:
-   Nhắn tin theo cú pháp: [Tên khoản chi] + [Số tiền]
+2. GHI KHOẢN CHI TIÊU (CHI PHÍ):
+   Cú pháp chuẩn: - [Tên khoản chi] [Số tiền] [Lý do / Ghi chú]
    Ví dụ:
-   • Nguyên vật liệu 500k
-   • Ship bưu cục 30k
-   • Ship hoả tốc 45k
-   • -200k tiền điện
-   • Ăn trưa nhân viên 45k
+   • - Tiền điện 500k shop hoa tháng 9 -> Lưu chi 500.000đ, Ghi chú: "shop hoa tháng 9"
+   • - 35k ruy băng gửi bạn An         -> Lưu chi 35.000đ, Mục: Nguyên vật liệu, Ghi chú: "gửi bạn An"
+   • - Ship bưu cục 30k                -> Lưu chi 30.000đ, Mục: Ship bưu cục
+   • - Ship hoả tốc 45k                -> Lưu chi 45.000đ, Mục: Ship hoả tốc
 
-* LƯU Ý VỀ CÁCH NHẬP SỐ TIỀN:
+3. BÓC TÁCH LÝ DO VÀ GHI CHÚ TỰ ĐỘNG:
+   - Toàn bộ nội dung sau số tiền (ví dụ: "khách hàng Abc", "gửi bạn An", "cọc trước 100k")
+     sẽ được bot tự động nhận diện và lưu vào cột Ghi chú/Mô tả.
+   - Khi xem báo cáo hoặc quản lý trên trang Admin, bạn luôn thấy rõ lý do và tên khách.
+
+4. PHÁT HIỆN LỖI TYPO & TỰ HỎI LẠI THÔNG MINH (MULTI-TURN CONTEXT):
+   - Nếu bạn gõ nhầm số tiền (ví dụ: "115kk", "200kkk", "115oo"):
+     -> Bot sẽ nhắc nhẹ và hỏi lại số tiền chính xác, không lưu bừa bãi.
+   - Nếu bạn nhắn thiếu thông tin (ví dụ chỉ nhắn "+ thư hoa khách hàng Abc" mà quên tiền):
+     -> Bot sẽ giữ nguyên nháp và hỏi lại: "Bot chưa thấy số tiền cho đơn này...".
+     -> Lượt chat tiếp theo bạn chỉ cần gõ "115k", Bot sẽ tự động hợp nhất và lưu thành công!
+
+* CÁCH NHẬP SỐ TIỀN LINH HOẠT:
   - Dùng 'k': 50k (= 50.000), 115k (= 115.000), 299k (= 299.000)
   - Dùng chữ: 150 nghìn (= 150.000), 1tr2 hoặc 1.2 triệu (= 1.200.000)
-  - Dùng số đầy đủ: 299000 (= 299.000)
+  - Dùng số đầy đủ: 115000 (= 115.000), 299000 (= 299.000)
 
 ================================================================================
 III. GỬI ẢNH CHUYỂN KHOẢN NGÂN HÀNG / BIÊN LAI
 ================================================================================
 
 1. Khi khách chuyển khoản thành công, chụp ảnh màn hình và gửi vào Zalo.
-2. AI tự động quét và đọc đúng số tiền giao dịch.
+2. AI tự động quét và đọc đúng số tiền giao dịch trong vòng 1-2 giây.
 3. CHAT BỔ SUNG LIỀN MẠCH:
    Vừa gửi ảnh xong, bạn chỉ cần chat ngay tên sản phẩm (VD: "Thư hoa" hoặc "Tủ hoa").
    Bot sẽ tự động gộp ảnh và tin nhắn thành 1 đơn hàng duy nhất mà không hỏi lại!
 
 ================================================================================
-IV. SỬA VÀ XÓA KHI GHI NHẦM
+IV. SỬA VÀ XÓA THÔNG MINH (SMART DELETE ENGINE)
 ================================================================================
 
 1. XÓA GIAO DỊCH VỪA GHI:
@@ -81,7 +92,7 @@ IV. SỬA VÀ XÓA KHI GHI NHẦM
    • xóa vừa rồi
    • nhầm rồi xóa
    • hủy đơn
-   -> Bot sẽ xóa ngay đơn gần nhất khỏi hệ thống.
+   -> Bot sẽ xóa ngay đơn gần nhất khỏi hệ thống và trừ khỏi báo cáo.
 
 2. SỬA LẠI GIAO DỊCH:
    • Sửa tiền: "sửa thành 350k" hoặc "350k mới đúng"
@@ -89,7 +100,7 @@ IV. SỬA VÀ XÓA KHI GHI NHẦM
    • Sửa cả tiền và loại: "đổi thành ship bưu cục 30k"
 
 ================================================================================
-V. TRA CỨU & XEM BÁO CÁO THỐNG KÊ
+V. TRA CỨU & XEM BÁO CÁO THỐNG KÊ TRÊN ZALO BOT
 ================================================================================
 
 1. PHÍM TẮT XEM BÁO CÁO NHANH:
@@ -109,32 +120,56 @@ V. TRA CỨU & XEM BÁO CÁO THỐNG KÊ
    • "tháng 8/2026 doanh thu được bao nhiêu?"
 
 ================================================================================
-VI. BẢNG TÓM TẮT NHANH (CHEAT SHEET)
+VI. TRANG QUẢN TRỊ WEB ADMIN & PHÂN BIỆT SỔ THEO TỪNG NHÓM CHAT
+================================================================================
+
+🌐 ĐƯỜNG DẪN TRUY CẬP: https://zalo-expense-bot.onrender.com/admin
+🔑 MÃ PIN QUẢN TRỊ   : 123456 (Bảo vệ bảo mật)
+
+1. PHÂN BIỆT SỔ THU CHI CHO TỪNG NHÓM CHAT / TÀI KHOẢN:
+   - Mỗi nhóm chat Zalo (Group chat) và mỗi tài khoản cá nhân có một sổ thu chi riêng biệt.
+   - Trên Web Admin, bạn có thanh lọc: Dropdown "👥 Tất cả Sổ / Nhóm":
+     + Chọn từng Nhóm chat cụ thể: Bảng dữ liệu sẽ chỉ hiển thị các đơn của nhóm đó.
+     + Cả 4 thẻ KPI (Tổng Thu, Tổng Chi, Lợi Nhuận, Số Giao Dịch) sẽ tự động tính riêng cho nhóm đó.
+   - Cột "Tài Khoản / Sổ" trên bảng dữ liệu gắn huy hiệu trực quan:
+     + 👥 [Tên Nhóm Chat] : Giao dịch phát sinh từ nhóm chat
+     + 👑 Chủ Shop        : Giao dịch tạo từ Web Admin
+     + 👤 [Tên Người Dùng]: Giao dịch từ chat riêng cá nhân
+
+2. QUẢN LÝ GIAO DỊCH THU & CHI THỦ CÔNG:
+   - Xem toàn bộ danh sách giao dịch, lọc theo Hôm nay, 7 ngày, Tháng này hoặc khoảng ngày tùy chọn.
+   - Thêm Giao Dịch: Bấm nút "➕ Thêm Giao Dịch", có thể chọn đích danh Sổ của nhóm chat cần ghi nhận.
+   - Sửa Giao Dịch : Bấm biểu tượng ✏️ để cập nhật lại số tiền, danh mục, nội dung.
+   - Xóa Giao Dịch : Bấm biểu tượng 🗑️ để gỡ giao dịch khỏi hệ thống.
+
+3. QUẢN TRỊ DANH MỤC THU & CHI:
+   - Thêm mặt hàng bán mới hoặc khoản chi phí mới tùy ý.
+   - Tùy biến biểu tượng Icon / Emoji cho sinh động.
+   - Xóa danh mục an toàn tuyệt đối: Các đơn hàng cũ sẽ tự động được bảo toàn về mục "Khác",
+     không bao giờ bị lệch tổng doanh thu của shop.
+
+================================================================================
+VII. BẢNG TÓM TẮT NHANH (CHEAT SHEET)
 ================================================================================
 
 🌸 BÁN HÀNG:
-   • Tủ hoa 299k
-   • Thư hoa 115k
-   • Huy chương 85k
-   • Móc khóa 50k
-   • Khung ảnh 180k
-   • Cúp hoa 450k
-   • Thiệp lẻ 25k
+   • + Thư hoa 115k khách hàng Abc
+   • + Tủ hoa 299k
+   • + 115k thư hoa
+   • Bán bó hoa sáp 300k
 
 💸 KHOẢN CHI:
-   • Nguyên vật liệu 500k
-   • Ship bưu cục 30k
-   • Ship hoả tốc 45k
-   • -200k tiền điện
+   • - Tiền điện 500k shop hoa tháng 9
+   • - Nguyên vật liệu 500k
+   • - Ship bưu cục 30k
+   • - Ship hoả tốc 45k
 
-📊 BÁO CÁO:
+📊 BÁO CÁO TRÊN BOT:
    • #baocao (Hôm nay)
    • #baocao thangnay (Cả tháng)
    • "báo cáo thu chi tháng 8/2026"
-   • "tháng này bán bao nhiêu tủ hoa?"
 
-🛠️ SỬA / XÓA:
-   • xóa (Xóa đơn gần nhất)
-   • sửa thành 350k
-   • đổi sang Thư hoa
+🌐 QUẢN TRỊ WEB ADMIN:
+   • Link: https://zalo-expense-bot.onrender.com/admin
+   • Lọc theo từng nhóm chat, thêm/sửa/xóa đơn thủ công, quản lý danh mục.
 ================================================================================

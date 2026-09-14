@@ -789,7 +789,60 @@ export class DatabaseService {
   }
 
   /**
-   * Lấy danh sách giao dịch cho Web Admin (hỗ trợ phân trang, lọc, tìm kiếm, tính tổng KPI)
+   * Lấy danh sách tất cả các tài khoản / nhóm chat có trong hệ thống (để phân biệt sổ thu chi)
+   */
+  static async getAllAccounts(): Promise<Array<{
+    id: string;
+    zalo_user_id: string;
+    display_name: string;
+    is_group: boolean;
+    tx_count?: number;
+  }>> {
+    const supabase = getSupabaseClient();
+    const { data: usersData, error } = await supabase
+      .from('users')
+      .select('id, zalo_user_id, display_name, created_at')
+      .order('display_name', { ascending: true });
+
+    if (error) {
+      console.error('Lỗi lấy danh sách tài khoản:', error);
+      return [];
+    }
+
+    // Đếm số lượng giao dịch của từng tài khoản/nhóm
+    const { data: txCounts, error: countErr } = await supabase
+      .from('transactions')
+      .select('user_id');
+
+    const countMap = new Map<string, number>();
+    if (!countErr && txCounts) {
+      for (const t of txCounts) {
+        if (t.user_id) {
+          countMap.set(t.user_id, (countMap.get(t.user_id) || 0) + 1);
+        }
+      }
+    }
+
+    return (usersData || []).map((u) => {
+      const isGroup = u.zalo_user_id?.startsWith('group_');
+      let name = u.display_name;
+      if (!name) {
+        name = isGroup
+          ? `Nhóm Chat (${u.zalo_user_id.replace('group_', '')})`
+          : (u.zalo_user_id === 'admin_web' ? 'Chủ Shop (Web Admin)' : `Cá nhân (${u.zalo_user_id})`);
+      }
+      return {
+        id: u.id,
+        zalo_user_id: u.zalo_user_id,
+        display_name: name,
+        is_group: isGroup,
+        tx_count: countMap.get(u.id) || 0,
+      };
+    });
+  }
+
+  /**
+   * Lấy danh sách giao dịch cho Web Admin (hỗ trợ phân trang, lọc, tìm kiếm, lọc theo tài khoản/nhóm, tính tổng KPI)
    */
   static async getAllTransactions(options: {
     page?: number;
@@ -799,6 +852,7 @@ export class DatabaseService {
     endDate?: string;
     categoryId?: number;
     search?: string;
+    userId?: string;
   }): Promise<{
     transactions: Transaction[];
     total: number;
@@ -819,6 +873,9 @@ export class DatabaseService {
       .from('transactions')
       .select('id, user_id, amount, transaction_type, description, raw_input, image_url, transaction_date, created_at, category:categories(id, name, icon), user:users(id, display_name, zalo_user_id)', { count: 'exact' });
 
+    if (options.userId && options.userId !== 'ALL') {
+      baseQuery = baseQuery.eq('user_id', options.userId);
+    }
     if (options.type && options.type !== 'ALL') {
       baseQuery = baseQuery.eq('transaction_type', options.type);
     }
@@ -847,11 +904,14 @@ export class DatabaseService {
       throw error;
     }
 
-    // Tính tổng KPI theo bộ lọc hiện tại
+    // Tính tổng KPI theo bộ lọc hiện tại (kèm theo bộ lọc userId nếu có)
     let summaryQuery = supabase
       .from('transactions')
       .select('amount, transaction_type');
 
+    if (options.userId && options.userId !== 'ALL') {
+      summaryQuery = summaryQuery.eq('user_id', options.userId);
+    }
     if (options.type && options.type !== 'ALL') {
       summaryQuery = summaryQuery.eq('transaction_type', options.type);
     }
@@ -868,13 +928,16 @@ export class DatabaseService {
       summaryQuery = summaryQuery.ilike('description', `%${options.search.trim()}%`);
     }
 
-    const { data: sumData } = await summaryQuery;
+    const { data: summaryData, error: summaryErr } = await summaryQuery;
+    if (summaryErr) {
+      console.warn('Lỗi tính KPI transactions:', summaryErr);
+    }
+
     let totalIncome = 0;
     let totalExpense = 0;
-
-    for (const row of sumData || []) {
-      const amt = Number(row.amount) || 0;
-      if (row.transaction_type === 'INCOME') {
+    for (const item of summaryData || []) {
+      const amt = Number(item.amount) || 0;
+      if (item.transaction_type === 'INCOME') {
         totalIncome += amt;
       } else {
         totalExpense += amt;
@@ -895,7 +958,7 @@ export class DatabaseService {
   }
 
   /**
-   * Thêm giao dịch thủ công từ Web Admin
+   * Thêm giao dịch thủ công từ Web Admin (cho phép chỉ định tài khoản/nhóm chat)
    */
   static async adminCreateTransaction(data: {
     amount: number;
@@ -903,12 +966,18 @@ export class DatabaseService {
     transaction_type: 'INCOME' | 'EXPENSE';
     description?: string | null;
     transaction_date?: string;
+    user_id?: string | null;
   }): Promise<Transaction> {
     const supabase = getSupabaseClient();
-    const adminUser = await this.getOrCreateUser('admin_web', 'Chủ Shop (Web Admin)');
+    let targetUserId = data.user_id;
+
+    if (!targetUserId) {
+      const adminUser = await this.getOrCreateUser('admin_web', 'Chủ Shop (Web Admin)');
+      targetUserId = adminUser.id;
+    }
 
     const payload = {
-      user_id: adminUser.id,
+      user_id: targetUserId,
       amount: data.amount,
       category_id: data.category_id || null,
       transaction_type: data.transaction_type || 'EXPENSE',

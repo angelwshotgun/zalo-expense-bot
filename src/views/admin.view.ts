@@ -737,6 +737,11 @@ export function renderAdminHtml(verificationCode: string): string {
             <button class="tab-btn" onclick="setTxType('EXPENSE', this)">💸 Chi</button>
           </div>
 
+          <!-- Lọc tài khoản / Sổ / Nhóm chat -->
+          <select class="form-select" id="txAccountFilter" style="width: 185px; padding: 6px 10px; font-size: 13px;" onchange="handleTxAccountFilterChange()">
+            <option value="ALL">👥 Tất cả Sổ / Nhóm</option>
+          </select>
+
           <!-- Lọc danh mục -->
           <select class="form-select" id="txCategoryFilter" style="width: 150px; padding: 6px 10px; font-size: 13px;" onchange="handleTxFilterChange()">
             <option value="">Tất cả danh mục</option>
@@ -761,6 +766,7 @@ export function renderAdminHtml(verificationCode: string): string {
           <thead>
             <tr>
               <th>Thời Gian</th>
+              <th>Tài Khoản / Sổ</th>
               <th>Loại</th>
               <th>Danh Mục</th>
               <th>Mặt Hàng / Nội Dung</th>
@@ -771,7 +777,7 @@ export function renderAdminHtml(verificationCode: string): string {
           </thead>
           <tbody id="transactionsTbody">
             <tr>
-              <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">
+              <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">
                 Đang tải danh sách giao dịch...
               </td>
             </tr>
@@ -880,6 +886,16 @@ export function renderAdminHtml(verificationCode: string): string {
       <h3 class="modal-title">➕ Thêm Giao Dịch Thu / Chi Mới</h3>
       <p class="modal-desc">Nhập khoản thu bán hàng hoặc khoản chi phí thủ công vào sổ của shop.</p>
       <form onsubmit="handleAddTxSubmit(event)">
+        <div class="form-group">
+          <label class="form-label">Sổ Thu Chi / Tài Khoản ghi nhận:</label>
+          <select class="form-select" id="txAddAccount">
+            <option value="">-- Mặc định: Chủ Shop (Web Admin) --</option>
+          </select>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+            Chọn nhóm chat Zalo hoặc tài khoản cụ thể nếu muốn ghi nhận riêng vào sổ của nhóm đó.
+          </div>
+        </div>
+
         <div class="form-group">
           <label class="form-label">Loại giao dịch:</label>
           <div class="type-selector">
@@ -1075,6 +1091,10 @@ export function renderAdminHtml(verificationCode: string): string {
     let selectedCatType = 'INCOME';
     let deleteTargetCatId = null;
 
+    // State tài khoản / nhóm chat
+    let accounts = [];
+    let txCurrentUserId = 'ALL';
+
     // State giao dịch
     let transactions = [];
     let txPage = 1;
@@ -1093,6 +1113,50 @@ export function renderAdminHtml(verificationCode: string): string {
       updateAuthUI();
       await fetchCategories();
       await fetchTransactions();
+    }
+
+    async function fetchAccounts() {
+      try {
+        const res = await fetch('/api/accounts');
+        const data = await res.json();
+        if (data.success) {
+          accounts = data.data || [];
+          populateAccountFilter();
+          populateAddTxAccountSelect();
+        }
+      } catch (err) {
+        console.warn('Lỗi tải danh sách tài khoản:', err);
+      }
+    }
+
+    function populateAccountFilter() {
+      const select = document.getElementById('txAccountFilter');
+      if (!select) return;
+      const currentVal = select.value || 'ALL';
+      select.innerHTML = '<option value="ALL">👥 Tất cả Sổ / Nhóm</option>';
+      for (const acc of accounts) {
+        const icon = acc.is_group ? '👥' : (acc.zalo_user_id === 'admin_web' ? '👑' : '👤');
+        const countStr = acc.tx_count !== undefined ? \` (\${acc.tx_count} đơn)\` : '';
+        select.innerHTML += \`<option value="\${acc.id}">\${icon} \${escapeHtml(acc.display_name)}\${countStr}</option>\`;
+      }
+      select.value = currentVal;
+    }
+
+    function populateAddTxAccountSelect() {
+      const select = document.getElementById('txAddAccount');
+      if (!select) return;
+      select.innerHTML = '<option value="">-- Mặc định: Chủ Shop (Web Admin) --</option>';
+      for (const acc of accounts) {
+        const icon = acc.is_group ? '👥' : (acc.zalo_user_id === 'admin_web' ? '👑' : '👤');
+        select.innerHTML += \`<option value="\${acc.id}">\${icon} \${escapeHtml(acc.display_name)}</option>\`;
+      }
+    }
+
+    function handleTxAccountFilterChange() {
+      const select = document.getElementById('txAccountFilter');
+      txCurrentUserId = select ? select.value : 'ALL';
+      txPage = 1;
+      fetchTransactions();
     }
 
     function switchView(view) {
@@ -1217,7 +1281,7 @@ export function renderAdminHtml(verificationCode: string): string {
       if (!transactions.length) {
         tbody.innerHTML = \`
           <tr>
-            <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">
+            <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 32px;">
               Chưa có giao dịch nào phù hợp với bộ lọc hiện tại.
             </td>
           </tr>

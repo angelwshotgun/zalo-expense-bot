@@ -164,6 +164,16 @@ export async function buildApp(): Promise<FastifyInstance> {
   // 4.6. QUẢN LÝ GIAO DỊCH THU & CHI THỦ CÔNG (TRANSACTIONS CRUD)
   // ===========================================================================
 
+  // Lấy danh sách tài khoản / nhóm chat để phân biệt sổ thu chi
+  app.get('/api/accounts', async (request, reply) => {
+    try {
+      const accounts = await DatabaseService.getAllAccounts();
+      return reply.send({ success: true, count: accounts.length, data: accounts });
+    } catch (error) {
+      return reply.status(500).send({ success: false, error: (error as Error).message });
+    }
+  });
+
   // Lấy danh sách giao dịch có phân trang, bộ lọc và thống kê KPI
   app.get('/api/transactions', async (request, reply) => {
     try {
@@ -175,6 +185,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       const endDate = query?.endDate as string | undefined;
       const categoryId = query?.categoryId ? parseInt(query.categoryId, 10) : undefined;
       const search = query?.search as string | undefined;
+      const userId = query?.userId as string | undefined;
 
       const result = await DatabaseService.getAllTransactions({
         page,
@@ -184,6 +195,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         endDate,
         categoryId,
         search,
+        userId,
       });
 
       return reply.send({ success: true, ...result });
@@ -206,6 +218,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       const categoryId = body?.category_id ? parseInt(body.category_id, 10) : null;
       const description = body?.description?.trim() || null;
       const transactionDate = body?.transaction_date || new Date().toISOString();
+      const userId = body?.user_id || null;
 
       const newTx = await DatabaseService.adminCreateTransaction({
         amount,
@@ -213,6 +226,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         transaction_type: type,
         description,
         transaction_date: transactionDate,
+        user_id: userId,
       });
 
       return reply.send({ success: true, data: newTx, message: 'Đã tạo giao dịch thành công' });
