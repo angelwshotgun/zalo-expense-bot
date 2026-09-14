@@ -123,6 +123,22 @@ assert(resPrivate.isGroup === false, 'Chat 1-1 phải là cá nhân');
 assert(resPrivate.targetZaloId === 'user_777', 'targetZaloId phải là ID người gửi');
 assert(resPrivate.targetName === 'Chị Cúc Chủ Shop', 'targetName phải là tên người gửi');
 
+// TEST 4: Logic ẩn tài khoản/nhóm có 0 đơn trên Web Admin
+console.log('\n--- TEST 4: Lọc tài khoản & ẩn sổ/nhóm 0 đơn ---');
+const sampleAccounts = [
+  { id: 'acc-1', display_name: 'Nhóm Shop 1', tx_count: 5, is_group: true },
+  { id: 'acc-2', display_name: 'Nhóm Rỗng', tx_count: 0, is_group: true },
+  { id: 'acc-3', display_name: 'Khách vãng lai', tx_count: undefined, is_group: false },
+  { id: 'acc-4', display_name: 'Chủ Shop', tx_count: 12, is_group: false },
+];
+
+const activeAccounts = sampleAccounts.filter(acc => (acc.tx_count || 0) > 0);
+assert(activeAccounts.length === 2, 'Chỉ giữ lại 2 tài khoản có giao dịch > 0');
+assert(activeAccounts.some(a => a.id === 'acc-1'), 'Nhóm Shop 1 (5 đơn) phải được giữ lại');
+assert(activeAccounts.some(a => a.id === 'acc-4'), 'Chủ Shop (12 đơn) phải được giữ lại');
+assert(!activeAccounts.some(a => a.id === 'acc-2'), 'Nhóm Rỗng (0 đơn) phải bị ẩn đi');
+assert(!activeAccounts.some(a => a.id === 'acc-3'), 'Khách vãng lai (undefined đơn) phải bị ẩn đi');
+
 console.log('\n===============================================================');
 console.log(`🏁 KẾT QUẢ: ${passCount} PASS, ${failCount} FAIL`);
 console.log('===============================================================');
@@ -130,3 +146,4 @@ console.log('===============================================================');
 if (failCount > 0) {
   process.exit(1);
 }
+

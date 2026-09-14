@@ -1136,11 +1136,19 @@ export function renderAdminHtml(verificationCode: string): string {
       const currentVal = txCurrentUserId || select.value || 'ALL';
       select.innerHTML = '<option value="ALL">👥 Tất cả Sổ / Nhóm</option>';
       for (const acc of accounts) {
+        // Đối với 0 đơn thì ẩn đi
+        if (!acc.tx_count || acc.tx_count <= 0) {
+          continue;
+        }
         const icon = acc.is_group ? '👥' : (acc.zalo_user_id === 'admin_web' ? '👑' : '👤');
         const countStr = acc.tx_count !== undefined ? \` (\${acc.tx_count} đơn)\` : '';
         select.innerHTML += \`<option value="\${acc.id}">\${icon} \${escapeHtml(acc.display_name)}\${countStr}</option>\`;
       }
       select.value = currentVal;
+      if (select.value !== currentVal) {
+        select.value = 'ALL';
+        txCurrentUserId = 'ALL';
+      }
     }
 
     function populateAddTxAccountSelect() {
@@ -1148,6 +1156,10 @@ export function renderAdminHtml(verificationCode: string): string {
       if (!select) return;
       select.innerHTML = '<option value="">-- Mặc định: Chủ Shop (Web Admin) --</option>';
       for (const acc of accounts) {
+        // Đối với 0 đơn thì ẩn đi
+        if (!acc.tx_count || acc.tx_count <= 0) {
+          continue;
+        }
         const icon = acc.is_group ? '👥' : (acc.zalo_user_id === 'admin_web' ? '👑' : '👤');
         select.innerHTML += \`<option value="\${acc.id}">\${icon} \${escapeHtml(acc.display_name)}</option>\`;
       }
@@ -1229,6 +1241,7 @@ export function renderAdminHtml(verificationCode: string): string {
         const params = new URLSearchParams();
         params.append('page', txPage);
         params.append('limit', txLimit);
+        if (txCurrentUserId && txCurrentUserId !== 'ALL') params.append('userId', txCurrentUserId);
         if (txCurrentType !== 'ALL') params.append('type', txCurrentType);
         if (txCurrentCategoryId) params.append('categoryId', txCurrentCategoryId);
         if (txCurrentSearch) params.append('search', txCurrentSearch);
@@ -1453,6 +1466,7 @@ export function renderAdminHtml(verificationCode: string): string {
         if (data.success) {
           closeModal('addTxModal');
           showToast('✅ Đã thêm giao dịch thành công!');
+          fetchAccounts();
           fetchTransactions();
         } else {
           if (res.status === 401) openPinModal();
@@ -1552,6 +1566,7 @@ export function renderAdminHtml(verificationCode: string): string {
           closeModal('deleteTxModal');
           showToast('🗑️ Đã xóa giao dịch thành công!');
           deleteTargetTxId = null;
+          fetchAccounts();
           fetchTransactions();
         } else {
           if (res.status === 401) openPinModal();

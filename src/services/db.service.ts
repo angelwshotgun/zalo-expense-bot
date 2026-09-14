@@ -791,7 +791,7 @@ export class DatabaseService {
   /**
    * Lấy danh sách tất cả các tài khoản / nhóm chat có trong hệ thống (để phân biệt sổ thu chi)
    */
-  static async getAllAccounts(): Promise<Array<{
+  static async getAllAccounts(hideEmpty = false): Promise<Array<{
     id: string;
     zalo_user_id: string;
     display_name: string;
@@ -812,7 +812,8 @@ export class DatabaseService {
     // Đếm số lượng giao dịch của từng tài khoản/nhóm
     const { data: txCounts, error: countErr } = await supabase
       .from('transactions')
-      .select('user_id');
+      .select('user_id')
+      .limit(10000);
 
     const countMap = new Map<string, number>();
     if (!countErr && txCounts) {
@@ -823,7 +824,7 @@ export class DatabaseService {
       }
     }
 
-    return (usersData || []).map((u) => {
+    let accounts = (usersData || []).map((u) => {
       const isGroup = u.zalo_user_id?.startsWith('group_');
       let name = u.display_name;
       if (!name) {
@@ -839,6 +840,16 @@ export class DatabaseService {
         tx_count: countMap.get(u.id) || 0,
       };
     });
+
+    // Sắp xếp: tài khoản có nhiều đơn lên đầu
+    accounts.sort((a, b) => (b.tx_count || 0) - (a.tx_count || 0));
+
+    // Nếu yêu cầu ẩn tài khoản 0 đơn
+    if (hideEmpty) {
+      accounts = accounts.filter((a) => (a.tx_count || 0) > 0);
+    }
+
+    return accounts;
   }
 
   /**

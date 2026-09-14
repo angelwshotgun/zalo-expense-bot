@@ -167,7 +167,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Lấy danh sách tài khoản / nhóm chat để phân biệt sổ thu chi
   app.get('/api/accounts', async (request, reply) => {
     try {
-      const accounts = await DatabaseService.getAllAccounts();
+      const query = request.query as any;
+      const hideEmpty = query?.hideEmpty === 'true' || query?.hideEmpty === true;
+      const accounts = await DatabaseService.getAllAccounts(hideEmpty);
       return reply.send({ success: true, count: accounts.length, data: accounts });
     } catch (error) {
       return reply.status(500).send({ success: false, error: (error as Error).message });
