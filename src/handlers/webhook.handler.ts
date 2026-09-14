@@ -7,6 +7,7 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { DatabaseService } from '../services/db.service.js';
 import { ZaloService } from '../services/zalo.service.js';
 import { LLMService } from '../services/llm.service.js';
+import { ZaloBotHandler } from './zalobot.handler.js';
 import { ZaloWebhookPayload, Category } from '../types/index.js';
 
 export class WebhookHandler {
@@ -93,6 +94,61 @@ export class WebhookHandler {
         await WebhookHandler.handleActionButton(senderId, user.id, 'ACTION_CANCEL_PENDING');
         return;
       }
+
+      // Nhận diện lệnh xóa (Smart Delete)
+      const isDelete =
+        lowerText.startsWith('xóa') ||
+        lowerText.startsWith('xoá') ||
+        lowerText.startsWith('xoa') ||
+        lowerText.startsWith('hủy') ||
+        lowerText.startsWith('huỷ') ||
+        lowerText.startsWith('#xoa') ||
+        lowerText.startsWith('/xoa') ||
+        /\b(?:xóa|xoá|xoa|hủy|huỷ)\s+(?:khoản|đơn|chi|thu|\d+)/i.test(lowerText);
+
+      if (isDelete) {
+        await DatabaseService.clearPendingClarification(user.id);
+        const kMatch = lowerText.match(/(\d+(?:\.\d+)?)\s*(?:k|nghìn|ngàn)/);
+        const trMatch = lowerText.match(/(\d+(?:\.\d+)?)\s*(?:tr|triệu)/);
+        const dottedMatch = lowerText.match(/\b\d{1,3}(?:[.,]\d{3})+\b/);
+        const rawMatch = lowerText.match(/\b\d{4,9}\b/);
+
+        let targetAmount: number | null = null;
+        if (kMatch) targetAmount = Math.round(parseFloat(kMatch[1]) * 1000);
+        else if (trMatch) targetAmount = Math.round(parseFloat(trMatch[1]) * 1000000);
+        else if (dottedMatch) targetAmount = parseInt(dottedMatch[0].replace(/[.,]/g, ''), 10);
+        else if (rawMatch) targetAmount = parseInt(rawMatch[0], 10);
+
+        let targetType: 'INCOME' | 'EXPENSE' | null = null;
+        if (lowerText.includes('chi') || lowerText.includes('mua')) targetType = 'EXPENSE';
+        else if (lowerText.includes('thu') || lowerText.includes('bán') || lowerText.includes('đơn')) targetType = 'INCOME';
+
+        let deleted: any = null;
+        if (targetAmount) {
+          deleted = await DatabaseService.deleteTransactionByCriteria(user.id, { amount: targetAmount, type: targetType });
+          if (!deleted && targetType) {
+            deleted = await DatabaseService.deleteTransactionByCriteria(user.id, { amount: targetAmount, type: null });
+          }
+        } else {
+          deleted = await DatabaseService.deleteLatestTransaction(user.id);
+        }
+
+        if (deleted) {
+          const typeStr = deleted.transaction_type === 'INCOME' ? 'Thu nhập' : 'Khoản chi';
+          const amtStr = Number(deleted.amount).toLocaleString('vi-VN') + ' đ';
+          await ZaloService.sendTextMessageWithQuickReplies(
+            senderId,
+            `🗑️ Đã xóa thành công ${typeStr} ${amtStr}!`,
+            [{ type: 'oa.query.show', title: '📊 Xem lại báo cáo', payload: 'ACTION_REPORT_TODAY' }]
+          );
+        } else {
+          await ZaloService.sendTextMessageWithQuickReplies(
+            senderId,
+            `⚠️ Không tìm thấy giao dịch phù hợp để xóa. Nhắn "#baocao" để kiểm tra sổ nhé!`
+          );
+        }
+        return;
+      }
     }
 
     // =========================================================================
@@ -117,6 +173,51 @@ export class WebhookHandler {
     // Nếu không có nội dung text và cũng không có ảnh
     if (!userText && !imageUrl) {
       return;
+    }
+
+    // =========================================================================
+    // TẦNG 1.5: BỘ PHÂN TÍCH NHANH & KIỂM TRA TYPO (0 TOKEN LLM)
+    // =========================================================================
+    if (!imageUrl && userText) {
+      const categories = await DatabaseService.getCategories();
+      const quick = ZaloBotHandler.parseQuickInput(userText, categories);
+      if (quick) {
+        const customDate = ZaloBotHandler.extractTransactionDate(userText);
+        const txDate = customDate ? customDate.dateIso : new Date().toISOString();
+        const matchedCat = await DatabaseService.matchCategoryByName(quick.category_name);
+        const tx = await DatabaseService.createTransaction({
+          user_id: user.id,
+          amount: quick.amount,
+          category_id: matchedCat?.id,
+          transaction_type: quick.transaction_type,
+          description: quick.description || matchedCat?.name,
+          raw_input: userText,
+          transaction_date: txDate,
+        });
+
+        await DatabaseService.clearPendingClarification(user.id);
+        await ZaloService.sendTransactionSuccessCard(senderId, tx, matchedCat?.name);
+        return;
+      }
+
+      const incomplete = ZaloBotHandler.detectTypoOrIncomplete(userText, categories);
+      if (incomplete) {
+        await DatabaseService.savePendingClarification(
+          user.id,
+          {
+            amount: incomplete.draft.amount,
+            category_id: incomplete.draft.category_id,
+            category_name: incomplete.draft.category_name,
+            transaction_type: incomplete.draft.transaction_type,
+            description: incomplete.draft.description,
+            raw_input: userText,
+          },
+          incomplete.waitingFor === 'amount' ? 'amount' : 'category',
+          15
+        );
+        await ZaloService.sendTextMessageWithQuickReplies(senderId, incomplete.question);
+        return;
+      }
     }
 
     // =========================================================================

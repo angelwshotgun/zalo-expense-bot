@@ -26,6 +26,14 @@ export function removeVietnameseTones(str: string): string {
     .replace(/Đ/g, 'D');
 }
 
+// Kiểm tra khớp từ hoặc cụm từ theo ranh giới từ (tránh lỗi substring dính chữ như 'khoản' dính vào 'khóa')
+export function hasWholePhrase(text: string, phrase: string): boolean {
+  if (!text || !phrase) return false;
+  const escaped = phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(?:^|[^a-z0-9à-ỹ])${escaped}(?:$|[^a-z0-9à-ỹ])`, 'i');
+  return regex.test(text);
+}
+
 // Cache danh mục trong bộ nhớ RAM để tối ưu tốc độ và giảm tải DB
 let cachedCategories: Category[] | null = null;
 let lastCategoriesFetched = 0;
@@ -257,12 +265,12 @@ export class DatabaseService {
     for (const c of sortedCats) {
       const catLower = c.name.toLowerCase();
       const catStripped = removeVietnameseTones(catLower);
-      if (normalized.includes(catLower) || stripped.includes(catStripped)) {
+      if (hasWholePhrase(normalized, catLower) || hasWholePhrase(stripped, catStripped)) {
         return c;
       }
     }
 
-    // 5. Khớp theo từ khóa sản phẩm thực tế / chữ viết tắt
+    // 5. Khớp theo từ khóa sản phẩm thực tế / chữ viết tắt (sử dụng ranh giới từ)
     const keywordMap: Array<{ name: string; keywords: string[] }> = [
       // THU (Bán hàng)
       { name: 'Thư hoa', keywords: ['thư hoa', 'thu hoa', 'bức thư hoa', 'bức thư'] },
@@ -277,12 +285,12 @@ export class DatabaseService {
       { name: 'Nguyên vật liệu', keywords: ['nguyên vật liệu', 'nguyen vat lieu', 'vật liệu', 'vat lieu', 'nguyên liệu', 'nguyen lieu', 'phụ liệu', 'phu lieu', 'mua đồ', 'mua do', 'mua hoa', 'hoa sáp', 'giấy gói', 'ruy băng', 'hộp hoa', 'keo nến', 'nvl'] },
       { name: 'Ship bưu cục', keywords: ['ship bưu cục', 'ship buu cuc', 'bưu cục', 'buu cuc', 'gửi hàng', 'gui hang', 'viettel post', 'vnpost', 'ghtk', 'giao hàng tiết kiệm', 'bưu điện', 'buu dien', 'ship thường', 'chuyển phát'] },
       { name: 'Ship hoả tốc', keywords: ['ship hoả tốc', 'ship hỏa tốc', 'ship hoa toc', 'hoả tốc', 'hỏa tốc', 'hoa toc', 'grab', 'ahamove', 'giao gấp', 'ship gấp', 'lalamove', 'be delivery'] },
-      { name: 'Khác', keywords: ['khác', 'khac', 'chi phí khác', 'chi khác', 'khoản khác'] },
+      { name: 'Khác', keywords: ['khác', 'khac', 'chi phí khác', 'chi khác'] },
     ];
 
     for (const item of keywordMap) {
       for (const kw of item.keywords) {
-        if (normalized.includes(kw) || stripped.includes(removeVietnameseTones(kw))) {
+        if (hasWholePhrase(normalized, kw) || hasWholePhrase(stripped, removeVietnameseTones(kw))) {
           const found = categories.find((c) => c.name.toLowerCase() === item.name.toLowerCase());
           if (found) return found;
         }
@@ -463,6 +471,78 @@ export class DatabaseService {
       return null;
     }
     return latest;
+  }
+
+  /**
+   * Xóa giao dịch theo tiêu chí cụ thể (số tiền, loại THU/CHI, từ khóa hoặc ngày)
+   */
+  static async deleteTransactionByCriteria(
+    userId: string,
+    criteria: {
+      amount?: number | null;
+      type?: 'INCOME' | 'EXPENSE' | null;
+      categoryName?: string | null;
+      keyword?: string | null;
+      date?: string | null;
+    }
+  ): Promise<Transaction | null> {
+    const supabase = getSupabaseClient();
+    let query = supabase
+      .from('transactions')
+      .select('id, user_id, amount, transaction_type, description, raw_input, image_url, transaction_date, created_at, category:categories(id, name, icon)')
+      .eq('user_id', userId);
+
+    if (criteria.amount && criteria.amount > 0) {
+      query = query.eq('amount', criteria.amount);
+    }
+    if (criteria.type) {
+      query = query.eq('transaction_type', criteria.type);
+    }
+    if (criteria.date) {
+      const dayOnly = criteria.date.slice(0, 10);
+      const start = `${dayOnly}T00:00:00.000+07:00`;
+      const end = `${dayOnly}T23:59:59.999+07:00`;
+      query = query.gte('transaction_date', start).lte('transaction_date', end);
+    }
+
+    query = query.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Lỗi tìm transaction theo tiêu chí để xóa:', error);
+      return null;
+    }
+
+    let targets = (data || []) as unknown as Transaction[];
+    if (targets.length === 0) {
+      return null;
+    }
+
+    // Nếu có lọc thêm theo tên danh mục hoặc từ khóa nội dung
+    if (criteria.categoryName && criteria.categoryName !== 'Khác') {
+      const catLower = criteria.categoryName.toLowerCase();
+      const filtered = targets.filter(t => t.category?.name?.toLowerCase().includes(catLower));
+      if (filtered.length > 0) targets = filtered;
+    }
+    if (criteria.keyword && criteria.keyword.trim()) {
+      const kwLower = criteria.keyword.trim().toLowerCase();
+      const filtered = targets.filter(t => t.description?.toLowerCase().includes(kwLower));
+      if (filtered.length > 0) targets = filtered;
+    }
+
+    const targetToDelete = targets[0];
+    const { error: delErr } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('id', targetToDelete.id)
+      .eq('user_id', userId);
+
+    if (delErr) {
+      console.error('Lỗi khi thực hiện xóa transaction:', delErr);
+      return null;
+    }
+
+    return targetToDelete;
   }
 
   /**
@@ -706,5 +786,199 @@ export class DatabaseService {
     };
 
     return { report, transactions: txs };
+  }
+
+  /**
+   * Lấy danh sách giao dịch cho Web Admin (hỗ trợ phân trang, lọc, tìm kiếm, tính tổng KPI)
+   */
+  static async getAllTransactions(options: {
+    page?: number;
+    limit?: number;
+    type?: 'ALL' | 'INCOME' | 'EXPENSE';
+    startDate?: string;
+    endDate?: string;
+    categoryId?: number;
+    search?: string;
+  }): Promise<{
+    transactions: Transaction[];
+    total: number;
+    page: number;
+    limit: number;
+    summary: {
+      totalIncome: number;
+      totalExpense: number;
+      netAmount: number;
+    };
+  }> {
+    const supabase = getSupabaseClient();
+    const page = Math.max(1, options.page || 1);
+    const limit = Math.min(100, Math.max(1, options.limit || 20));
+    const offset = (page - 1) * limit;
+
+    let baseQuery = supabase
+      .from('transactions')
+      .select('id, user_id, amount, transaction_type, description, raw_input, image_url, transaction_date, created_at, category:categories(id, name, icon), user:users(id, display_name, zalo_user_id)', { count: 'exact' });
+
+    if (options.type && options.type !== 'ALL') {
+      baseQuery = baseQuery.eq('transaction_type', options.type);
+    }
+    if (options.startDate) {
+      baseQuery = baseQuery.gte('transaction_date', options.startDate);
+    }
+    if (options.endDate) {
+      baseQuery = baseQuery.lte('transaction_date', options.endDate);
+    }
+    if (options.categoryId) {
+      baseQuery = baseQuery.eq('category_id', options.categoryId);
+    }
+    if (options.search && options.search.trim()) {
+      const q = options.search.trim();
+      baseQuery = baseQuery.ilike('description', `%${q}%`);
+    }
+
+    baseQuery = baseQuery
+      .order('transaction_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    // Lấy dữ liệu theo phân trang
+    const { data: pageData, count, error } = await baseQuery.range(offset, offset + limit - 1);
+    if (error) {
+      console.error('Lỗi khi lấy danh sách transactions:', error);
+      throw error;
+    }
+
+    // Tính tổng KPI theo bộ lọc hiện tại
+    let summaryQuery = supabase
+      .from('transactions')
+      .select('amount, transaction_type');
+
+    if (options.type && options.type !== 'ALL') {
+      summaryQuery = summaryQuery.eq('transaction_type', options.type);
+    }
+    if (options.startDate) {
+      summaryQuery = summaryQuery.gte('transaction_date', options.startDate);
+    }
+    if (options.endDate) {
+      summaryQuery = summaryQuery.lte('transaction_date', options.endDate);
+    }
+    if (options.categoryId) {
+      summaryQuery = summaryQuery.eq('category_id', options.categoryId);
+    }
+    if (options.search && options.search.trim()) {
+      summaryQuery = summaryQuery.ilike('description', `%${options.search.trim()}%`);
+    }
+
+    const { data: sumData } = await summaryQuery;
+    let totalIncome = 0;
+    let totalExpense = 0;
+
+    for (const row of sumData || []) {
+      const amt = Number(row.amount) || 0;
+      if (row.transaction_type === 'INCOME') {
+        totalIncome += amt;
+      } else {
+        totalExpense += amt;
+      }
+    }
+
+    return {
+      transactions: (pageData || []) as unknown as Transaction[],
+      total: count || 0,
+      page,
+      limit,
+      summary: {
+        totalIncome,
+        totalExpense,
+        netAmount: totalIncome - totalExpense,
+      },
+    };
+  }
+
+  /**
+   * Thêm giao dịch thủ công từ Web Admin
+   */
+  static async adminCreateTransaction(data: {
+    amount: number;
+    category_id?: number | null;
+    transaction_type: 'INCOME' | 'EXPENSE';
+    description?: string | null;
+    transaction_date?: string;
+  }): Promise<Transaction> {
+    const supabase = getSupabaseClient();
+    const adminUser = await this.getOrCreateUser('admin_web', 'Chủ Shop (Web Admin)');
+
+    const payload = {
+      user_id: adminUser.id,
+      amount: data.amount,
+      category_id: data.category_id || null,
+      transaction_type: data.transaction_type || 'EXPENSE',
+      description: data.description || (data.transaction_type === 'INCOME' ? 'Thu nhập' : 'Khoản chi'),
+      raw_input: '[Tạo thủ công từ Web Admin]',
+      transaction_date: data.transaction_date || new Date().toISOString(),
+    };
+
+    const { data: newTx, error } = await supabase
+      .from('transactions')
+      .insert(payload)
+      .select('*, category:categories(*)')
+      .single();
+
+    if (error) {
+      console.error('Lỗi adminCreateTransaction:', error);
+      throw error;
+    }
+    return newTx as unknown as Transaction;
+  }
+
+  /**
+   * Cập nhật giao dịch từ Web Admin
+   */
+  static async adminUpdateTransaction(
+    id: string,
+    updates: {
+      amount?: number;
+      category_id?: number | null;
+      transaction_type?: 'INCOME' | 'EXPENSE';
+      description?: string | null;
+      transaction_date?: string;
+    }
+  ): Promise<Transaction | null> {
+    const supabase = getSupabaseClient();
+    const payload: any = {};
+    if (updates.amount !== undefined && updates.amount > 0) payload.amount = updates.amount;
+    if (updates.category_id !== undefined) payload.category_id = updates.category_id;
+    if (updates.transaction_type) payload.transaction_type = updates.transaction_type;
+    if (updates.description !== undefined) payload.description = updates.description;
+    if (updates.transaction_date) payload.transaction_date = updates.transaction_date;
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .update(payload)
+      .eq('id', id)
+      .select('*, category:categories(*)')
+      .single();
+
+    if (error) {
+      console.error('Lỗi adminUpdateTransaction:', error);
+      throw error;
+    }
+    return data as unknown as Transaction;
+  }
+
+  /**
+   * Xóa giao dịch từ Web Admin theo ID
+   */
+  static async adminDeleteTransaction(id: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Lỗi adminDeleteTransaction:', error);
+      throw error;
+    }
+    return true;
   }
 }

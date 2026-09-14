@@ -4,10 +4,27 @@
 // ==============================================================================
 
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { DatabaseService, removeVietnameseTones } from '../services/db.service.js';
+import { DatabaseService, removeVietnameseTones, hasWholePhrase } from '../services/db.service.js';
 import { ZaloBotService } from '../services/zalobot.service.js';
 import { LLMService } from '../services/llm.service.js';
+import { ConversationService, PendingDraft, WaitingField } from '../services/conversation.service.js';
 import { Category } from '../types/index.js';
+
+export interface ExtractedAmountInfo {
+  amount: number;
+  startIndex: number;
+  endIndex: number;
+  matchedRaw: string;
+}
+
+export interface QuickParsedResult {
+  amount: number;
+  category_name: string;
+  transaction_type: 'INCOME' | 'EXPENSE';
+  item_name?: string;
+  note?: string;
+  description: string;
+}
 
 export interface ZaloBotWebhookBody {
   ok: boolean;
@@ -141,6 +158,10 @@ export class ZaloBotHandler {
 
     // Lấy hoặc tạo tài khoản sổ trong Supabase
     const user = await DatabaseService.getOrCreateUser(targetZaloId, targetName);
+
+    if (userText) {
+      ConversationService.addTurn(user.id, 'user', userText);
+    }
 
     if (userText && !photoUrl) {
       userRecentTexts.set(user.id, { text: userText, timestamp: Date.now() });
@@ -276,25 +297,26 @@ export class ZaloBotHandler {
     }
 
     // =========================================================================
-    // TẦNG 0.5: XỬ LÝ XOÁ VÀ SỬA GIAO DỊCH GẦN NHẤT
+    // TẦNG 0.5: XỬ LÝ XOÁ VÀ SỬA GIAO DỊCH (SMART DELETE & EDIT ENGINE)
     // =========================================================================
     const normalizedText = lowerText.replace(/[.,!?]/g, '').trim();
 
-    const isDeleteCommand =
-      normalizedText === 'xóa' ||
-      normalizedText === 'xoá' ||
-      normalizedText === 'xoa' ||
-      normalizedText === '#xoa' ||
-      normalizedText === '/xoa' ||
-      normalizedText === 'xóa đi' ||
-      normalizedText === 'xoá đi' ||
-      normalizedText === 'xoa di' ||
-      normalizedText.startsWith('xóa đơn') ||
-      normalizedText.startsWith('xoá đơn') ||
-      normalizedText.startsWith('xoa don') ||
-      normalizedText.startsWith('hủy đơn') ||
-      normalizedText.startsWith('huỷ đơn') ||
-      normalizedText.startsWith('bỏ đơn') ||
+    // Nhận diện mọi ý định XÓA / HỦY (bao gồm cả xóa theo số tiền, theo mặt hàng, hoặc xóa gần nhất)
+    const isDeleteIntent =
+      normalizedText.startsWith('xóa') ||
+      normalizedText.startsWith('xoá') ||
+      normalizedText.startsWith('xoa') ||
+      normalizedText.startsWith('hủy') ||
+      normalizedText.startsWith('huỷ') ||
+      normalizedText.startsWith('huy') ||
+      normalizedText.startsWith('bỏ') ||
+      normalizedText.startsWith('bo') ||
+      normalizedText.startsWith('#xoa') ||
+      normalizedText.startsWith('/xoa') ||
+      normalizedText.startsWith('#huy') ||
+      normalizedText.startsWith('/huy') ||
+      normalizedText.startsWith('/delete') ||
+      /\b(?:xóa|xoá|xoa|hủy|huỷ|huy)\s+(?:khoản|đơn|giao dịch|mục|tiền|chi|thu|\d+)/i.test(lowerText) ||
       normalizedText.includes('xóa vừa rồi') ||
       normalizedText.includes('xoá vừa rồi') ||
       normalizedText.includes('xóa đơn vừa rồi') ||
@@ -313,31 +335,96 @@ export class ZaloBotHandler {
       normalizedText.includes('nhầm rồi xoá') ||
       normalizedText.includes('bị nhầm xóa');
 
-    if (isDeleteCommand) {
-      console.log(`🗑️ [Zalo Bot] Yêu cầu xóa giao dịch gần nhất của user: ${user.id}`);
+    if (isDeleteIntent) {
+      console.log(`🗑️ [Zalo Bot - Smart Delete] Yêu cầu xóa từ user: ${user.id} - Text: "${userText}"`);
       userRecentTexts.delete(user.id);
       inFlightImageTasks.delete(user.id);
       await DatabaseService.clearPendingClarification(user.id);
-      const deleted = await DatabaseService.deleteLatestTransaction(user.id);
+
+      // 1. Trích xuất các tiêu chí xóa nếu có: số tiền, loại thu/chi, ngày, từ khóa
+      const targetAmount = ZaloBotHandler.extractAmount(lowerText);
+      const customDate = ZaloBotHandler.extractTransactionDate(userText);
+
+      let targetType: 'INCOME' | 'EXPENSE' | null = null;
+      if (
+        lowerText.includes('khoản chi') ||
+        lowerText.includes('khoan chi') ||
+        lowerText.includes('chi') ||
+        lowerText.includes('mua')
+      ) {
+        targetType = 'EXPENSE';
+      } else if (
+        lowerText.includes('khoản thu') ||
+        lowerText.includes('khoan thu') ||
+        lowerText.includes('thu') ||
+        lowerText.includes('bán') ||
+        lowerText.includes('ban') ||
+        lowerText.includes('đơn') ||
+        lowerText.includes('don')
+      ) {
+        targetType = 'INCOME';
+      }
+
+      // Trích xuất từ khóa tìm kiếm (loại trừ các từ chỉ lệnh xóa)
+      let targetKeyword = lowerText
+        .replace(/\b(?:xóa|xoá|xoa|hủy|huỷ|huy|bỏ|bo|đơn|don|khoản|khoan|giao dịch|giao dich|chi|thu|tiền|tien|đi|di|hộ|ho|giúp|giup|giùm|gium|vừa rồi|vua roi|gần nhất|gan nhat)\b/gi, '')
+        .replace(/\b(?:\d+(?:[.,]\d+)?)\s*(?:tr|triệu|k|nghìn|ngàn|đ|vnd|dong)\b/gi, '')
+        .replace(/\b\d{1,3}(?:[.,]\d{3})+\b/g, '')
+        .replace(/\b\d{4,9}\b/g, '')
+        .trim();
+
+      let deleted: any = null;
+
+      // Nếu có số tiền hoặc loại/từ khóa/ngày cụ thể -> Tìm và xóa theo tiêu chí
+      if (targetAmount || customDate || (targetKeyword && targetKeyword.length >= 2)) {
+        deleted = await DatabaseService.deleteTransactionByCriteria(user.id, {
+          amount: targetAmount,
+          type: targetType,
+          keyword: targetKeyword && targetKeyword.length >= 2 ? targetKeyword : null,
+          date: customDate ? customDate.dateIso : null,
+        });
+
+        if (!deleted && targetType) {
+          // Thử lại không ép loại nếu chưa tìm thấy
+          deleted = await DatabaseService.deleteTransactionByCriteria(user.id, {
+            amount: targetAmount,
+            type: null,
+            keyword: targetKeyword && targetKeyword.length >= 2 ? targetKeyword : null,
+            date: customDate ? customDate.dateIso : null,
+          });
+        }
+      } else {
+        // Mặc định: xóa giao dịch gần nhất
+        deleted = await DatabaseService.deleteLatestTransaction(user.id);
+      }
+
       if (deleted) {
         const catName = deleted.category?.name || 'Khác';
         const catIcon = deleted.category?.icon || '📦';
         const amountStr = ZaloBotService.formatCurrency(deleted.amount);
         const typeStr = deleted.transaction_type === 'INCOME' ? 'Thu nhập / Bán hàng' : 'Khoản chi';
+        const txDateDisplay = new Date(deleted.transaction_date).toLocaleDateString('vi-VN');
 
         await ZaloBotService.sendMessage(
           chatId,
-          `🗑️ **ĐÃ XÓA GIAO DỊCH GẦN NHẤT!**\n\n` +
+          `🗑️ **ĐÃ XÓA GIAO DỊCH THÀNH CÔNG!**\n\n` +
           `• **Loại:** ${typeStr}\n` +
-          `• **Mặt hàng:** ${catIcon} **${catName}**\n` +
+          `• **Mặt hàng / Mục chi:** ${catIcon} **${catName}**\n` +
           `• **Số tiền:** **${amountStr}**\n` +
           (isGroup ? `• **Thao tác bởi:** ${senderName}\n` : '') +
           (deleted.description ? `• **Nội dung:** ${deleted.description}\n` : '') +
+          `• **Ngày ghi nhận:** ${txDateDisplay}\n` +
           `\n━━━━━━━━━━━━━━━━━━\n` +
-          `💡 _Giao dịch đã được xóa hoàn toàn. Gõ **#baocao** để kiểm tra lại._`
+          `💡 _Giao dịch đã được xóa hoàn toàn khỏi hệ thống. Gõ **#baocao** để kiểm tra lại._`
         );
       } else {
-        await ZaloBotService.sendMessage(chatId, '⚠️ Không tìm thấy giao dịch nào gần đây để xóa.');
+        const amountHint = targetAmount ? ` có số tiền **${ZaloBotService.formatCurrency(targetAmount)}**` : '';
+        const typeHint = targetType === 'EXPENSE' ? 'khoản chi' : (targetType === 'INCOME' ? 'khoản thu' : 'giao dịch');
+        await ZaloBotService.sendMessage(
+          chatId,
+          `⚠️ Không tìm thấy ${typeHint} nào${amountHint} phù hợp để xóa.\n` +
+          `👉 Bạn có thể gõ **xóa** để xóa giao dịch vừa ghi gần nhất, hoặc gõ **#baocao** để kiểm tra lại sổ thu chi nhé!`
+        );
       }
       return;
     }
@@ -466,6 +553,156 @@ export class ZaloBotHandler {
       }
     }
 
+    // =========================================================================
+    // TẦNG 1.4: XỬ LÝ HỘI THOẠI ĐA LƯỢT (MULTI-TURN CONVERSATION RESOLUTION)
+    // Nếu có một phiên làm rõ / nháp giao dịch đang chờ bổ sung thông tin từ các lần chat trước
+    // =========================================================================
+    const pendingDraftInfo = ConversationService.getPendingDraft(user.id);
+    if (pendingDraftInfo && userText && !photoUrl) {
+      const { draft, waitingFor, attempts } = pendingDraftInfo;
+      console.log(`🔄 [Multi-turn Context] User ${user.id} đang chờ: "${waitingFor}" (Lần ${attempts}) - Text: "${userText}"`);
+
+      // 1. Kiểm tra lệnh hủy
+      if (
+        lowerText === 'hủy' ||
+        lowerText === 'thôi' ||
+        lowerText === 'bỏ qua' ||
+        lowerText === 'cancel' ||
+        lowerText === '#huy' ||
+        lowerText === '/huy'
+      ) {
+        await ConversationService.clearPendingDraft(user.id);
+        await ZaloBotService.sendMessage(chatId, '👌 Đã hủy thao tác ghi nhận.');
+        return;
+      }
+
+      // 2. Kiểm tra nếu người dùng gửi một giao dịch hoàn chỉnh mới -> Hủy nháp cũ, ưu tiên cái mới
+      const categories = await DatabaseService.getCategories();
+      const freshQuick = ZaloBotHandler.parseQuickInput(userText, categories);
+      if (freshQuick) {
+        await ConversationService.clearPendingDraft(user.id);
+        // Luồng tiếp tục chạy xuống Tier 1.5 bên dưới
+      } else {
+        // Đang giải quyết trường còn thiếu theo ngữ cảnh
+        if (waitingFor === 'amount') {
+          // Kiểm tra lỗi typo số tiền
+          const typoCheck = ZaloBotHandler.detectTypo(userText);
+          if (typoCheck) {
+            await ZaloBotService.sendMessage(chatId, typoCheck.question);
+            return;
+          }
+
+          const resolvedAmount = ZaloBotHandler.extractAmount(userText);
+          if (resolvedAmount && resolvedAmount > 0) {
+            const customDate = ZaloBotHandler.extractTransactionDate(userText);
+            const finalTxDate = customDate?.dateIso || draft.transaction_date || new Date().toISOString();
+
+            // Nếu người dùng nhắn thêm ghi chú kèm số tiền (ví dụ: "115k khách chuyển khoản")
+            const amountRange = ZaloBotHandler.extractAmountWithRange(userText);
+            let extraNote = '';
+            if (amountRange) {
+              const remainder = (userText.slice(0, amountRange.startIndex) + ' ' + userText.slice(amountRange.endIndex)).trim();
+              extraNote = remainder.replace(/^[+\-\/#\s:,]+/, '').trim();
+            }
+
+            let finalDesc = draft.description || draft.note || draft.item_name || 'Ghi chép';
+            if (extraNote) {
+              finalDesc = finalDesc !== 'Ghi chép' ? `${finalDesc} - ${extraNote}` : extraNote;
+            }
+
+            let catId = draft.category_id;
+            if (!catId && draft.category_name) {
+              const matchedCat = await DatabaseService.matchCategoryByName(draft.category_name, draft.transaction_type);
+              catId = matchedCat?.id;
+            }
+
+            const tx = await DatabaseService.createTransaction({
+              user_id: user.id,
+              amount: resolvedAmount,
+              category_id: catId,
+              transaction_type: draft.transaction_type || 'INCOME',
+              description: finalDesc,
+              raw_input: `${draft.raw_input || ''} -> ${userText}`,
+              image_url: draft.image_url,
+              transaction_date: finalTxDate,
+            });
+
+            await ConversationService.clearPendingDraft(user.id);
+            const successMsg = ZaloBotService.buildSuccessText(tx, draft.category_name || undefined, isGroup ? senderName : undefined);
+            await ZaloBotService.sendMessage(chatId, successMsg);
+            return;
+          } else {
+            if (attempts < 3) {
+              await ZaloBotService.sendMessage(
+                chatId,
+                `🤔 Bot vẫn chưa nhận diện được số tiền cho **${draft.category_name || draft.item_name || 'đơn này'}**.\n` +
+                `👉 Bạn vui lòng nhắn lại số tiền (ví dụ: **115k**, **115.000**), hoặc gõ **"hủy"** để hủy bỏ nhé!`
+              );
+              return;
+            } else {
+              await ConversationService.clearPendingDraft(user.id);
+              await ZaloBotService.sendMessage(chatId, `⚠️ Đã hủy phiên chờ do không nhận được số tiền. Bạn vui lòng nhắn lại từ đầu theo cú pháp: \`+ [mặt hàng] [số tiền]\` nhé!`);
+              return;
+            }
+          }
+        } else if (waitingFor === 'category_or_reason') {
+          const matchedCat = await DatabaseService.matchCategoryByName(userText, draft.transaction_type);
+          const finalCat = matchedCat || categories.find((c) => c.type === draft.transaction_type) || categories[0];
+
+          let note = userText.trim();
+          if (matchedCat && matchedCat.name !== 'Khác') {
+            const strippedNote = note.replace(new RegExp(matchedCat.name, 'i'), '').trim();
+            if (strippedNote) note = strippedNote;
+          }
+
+          const tx = await DatabaseService.createTransaction({
+            user_id: user.id,
+            amount: draft.amount!,
+            category_id: finalCat?.id,
+            transaction_type: draft.transaction_type || 'INCOME',
+            description: note || finalCat?.name || 'Ghi chép',
+            raw_input: `${draft.raw_input || ''} -> ${userText}`,
+            image_url: draft.image_url,
+            transaction_date: draft.transaction_date || new Date().toISOString(),
+          });
+
+          await ConversationService.clearPendingDraft(user.id);
+          const successMsg = ZaloBotService.buildSuccessText(tx, finalCat?.name, isGroup ? senderName : undefined);
+          await ZaloBotService.sendMessage(chatId, successMsg);
+          return;
+        } else if (waitingFor === 'type') {
+          let resolvedType: 'INCOME' | 'EXPENSE' | null = null;
+          if (lowerText.includes('+') || lowerText.includes('thu') || lowerText.includes('bán')) {
+            resolvedType = 'INCOME';
+          } else if (lowerText.includes('-') || lowerText.includes('chi') || lowerText.includes('mua') || lowerText.includes('tiêu')) {
+            resolvedType = 'EXPENSE';
+          }
+
+          if (resolvedType) {
+            const matchedCat = draft.category_name
+              ? await DatabaseService.matchCategoryByName(draft.category_name, resolvedType)
+              : categories.find((c) => c.type === resolvedType);
+
+            const tx = await DatabaseService.createTransaction({
+              user_id: user.id,
+              amount: draft.amount!,
+              category_id: matchedCat?.id,
+              transaction_type: resolvedType,
+              description: draft.description || draft.note || matchedCat?.name || 'Ghi chép',
+              raw_input: `${draft.raw_input || ''} -> ${userText}`,
+              image_url: draft.image_url,
+              transaction_date: draft.transaction_date || new Date().toISOString(),
+            });
+
+            await ConversationService.clearPendingDraft(user.id);
+            const successMsg = ZaloBotService.buildSuccessText(tx, matchedCat?.name, isGroup ? senderName : undefined);
+            await ZaloBotService.sendMessage(chatId, successMsg);
+            return;
+          }
+        }
+      }
+    }
+
     // Kiểm tra xem tin nhắn có phải rõ ràng là câu hỏi / yêu cầu báo cáo / tra cứu hay không
     const isExplicitQuery =
       lowerText.includes('báo cáo') ||
@@ -514,8 +751,24 @@ export class ZaloBotHandler {
         });
 
         await DatabaseService.clearPendingClarification(user.id);
+        await ConversationService.clearPendingDraft(user.id);
         const successMsg = ZaloBotService.buildSuccessText(tx, matchedCategory?.name, isGroup ? senderName : undefined);
         await ZaloBotService.sendMessage(chatId, successMsg);
+        return;
+      }
+
+      // Nếu không khớp giao dịch hoàn chỉnh, kiểm tra xem có phải là thông tin thiếu hoặc typo không
+      const incompleteCheck = ZaloBotHandler.detectTypoOrIncomplete(userText, categories);
+      if (incompleteCheck) {
+        console.log(`⚠️ [Zalo Bot - Incomplete/Typo] Phát hiện: ${incompleteCheck.type} - Hỏi lại user ${user.id}`);
+        await ConversationService.setPendingDraft(
+          user.id,
+          incompleteCheck.draft,
+          incompleteCheck.waitingFor,
+          incompleteCheck.question,
+          chatId
+        );
+        await ZaloBotService.sendMessage(chatId, incompleteCheck.question);
         return;
       }
     }
@@ -895,59 +1148,320 @@ export class ZaloBotHandler {
   }
 
   /**
-   * Trích xuất số tiền linh hoạt và chuẩn xác từ văn bản tiếng Việt
+   * Che các định dạng ngày tháng năm bằng khoảng trắng có cùng độ dài để bảo toàn chỉ số index
    */
-  public static extractAmount(text: string): number | null {
+  public static maskDatesPreservingLength(text: string): string {
+    return text
+      .replace(/\b(?:\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)\b/g, (m) => ' '.repeat(m.length))
+      .replace(/\b(?:ngày\s+)?\d{1,2}\s+(?:tháng|thg)\s+\d{1,2}(?:\s+(?:năm\s+)?\d{4})?\b/gi, (m) => ' '.repeat(m.length))
+      .replace(/\b(?:tháng|thang)\s*\d{1,2}(?:\/\d{2,4})?\b/gi, (m) => ' '.repeat(m.length))
+      .replace(/\b(?:năm|nam)\s*\d{4}\b/gi, (m) => ' '.repeat(m.length))
+      .replace(/\/\d{4}\b/g, (m) => ' '.repeat(m.length));
+  }
+
+  /**
+   * Trích xuất số tiền linh hoạt kèm vị trí bắt đầu và kết thúc (startIndex, endIndex)
+   */
+  public static extractAmountWithRange(text: string): ExtractedAmountInfo | null {
     if (!text) return null;
 
-    // Loại bỏ các mẫu ngày tháng năm trước khi trích xuất tiền: ví dụ 05/09, 05/09/2026, 8/2026, năm 2026, tháng 8
-    const cleaned = text
-      .replace(/\b(?:\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)\b/g, ' ')
-      .replace(/\b(?:tháng|thang)\s*\d{1,2}(?:\/\d{2,4})?\b/gi, ' ')
-      .replace(/\b(?:năm|nam)\s*\d{4}\b/gi, ' ')
-      .replace(/\/\d{4}\b/g, ' ');
-
-    const lower = cleaned.toLowerCase();
+    const masked = this.maskDatesPreservingLength(text);
+    const lower = masked.toLowerCase();
 
     // 1. Dạng triệu phức: 1tr2, 1tr200, 1 triệu 200
     const trComplex = lower.match(/(\d+)\s*(?:tr|triệu)\s*(\d+)/i);
-    if (trComplex) {
+    if (trComplex && trComplex.index !== undefined) {
       const main = parseInt(trComplex[1], 10) * 1000000;
       const subDigits = trComplex[2];
       const sub = parseInt(subDigits.padEnd(6, '0').slice(0, 6), 10);
-      return main + sub;
+      const startIndex = trComplex.index;
+      const endIndex = startIndex + trComplex[0].length;
+      return {
+        amount: main + sub,
+        startIndex,
+        endIndex,
+        matchedRaw: text.slice(startIndex, endIndex),
+      };
     }
 
     // 2. Dạng triệu đơn: 1.5tr, 2 triệu, 1.2tr
     const trSimple = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:tr|triệu)\b/i);
-    if (trSimple) {
+    if (trSimple && trSimple.index !== undefined) {
       const val = parseFloat(trSimple[1].replace(',', '.'));
-      return Math.round(val * 1000000);
+      const startIndex = trSimple.index;
+      const endIndex = startIndex + trSimple[0].length;
+      return {
+        amount: Math.round(val * 1000000),
+        startIndex,
+        endIndex,
+        matchedRaw: text.slice(startIndex, endIndex),
+      };
     }
 
     // 3. Dạng nghìn/k: 50k, 115k, 299 nghìn, 50.5k
     const kMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:k|nghìn|ngàn)\b/i);
-    if (kMatch) {
+    if (kMatch && kMatch.index !== undefined) {
       const val = parseFloat(kMatch[1].replace(',', '.'));
-      return Math.round(val * 1000);
+      const startIndex = kMatch.index;
+      const endIndex = startIndex + kMatch[0].length;
+      return {
+        amount: Math.round(val * 1000),
+        startIndex,
+        endIndex,
+        matchedRaw: text.slice(startIndex, endIndex),
+      };
     }
 
     // 4. Dạng số có dấu chấm/phẩy phân cách ngàn: 50.000, 115.000, 1.200.000 hoặc 50,000
     const dottedMatch = lower.match(/\b(\d{1,3}(?:[.,]\d{3})+)(?:\s*(?:đ|vnd|dong))?\b/i);
-    if (dottedMatch) {
+    if (dottedMatch && dottedMatch.index !== undefined) {
       const rawDigits = dottedMatch[1].replace(/[.,]/g, '');
       const val = parseInt(rawDigits, 10);
-      if (val > 0) return val;
+      if (val > 0) {
+        const startIndex = dottedMatch.index;
+        const endIndex = startIndex + dottedMatch[0].length;
+        return {
+          amount: val,
+          startIndex,
+          endIndex,
+          matchedRaw: text.slice(startIndex, endIndex),
+        };
+      }
     }
 
     // 5. Dạng số liền: +50000, 50000, 115000 (loại trừ các số 4 chữ số thuộc về năm 2020-2035)
     const pureNumMatch = lower.match(/(?:^|\D)(\d{4,9})(?:\s*(?:đ|vnd|dong))?(?:\D|$)/i);
-    if (pureNumMatch) {
-      const val = parseInt(pureNumMatch[1], 10);
-      if (val >= 2020 && val <= 2035 && !lower.includes('đ') && !lower.includes('vnd') && !lower.includes('dong')) {
-        return null;
+    if (pureNumMatch && pureNumMatch.index !== undefined) {
+      const rawDigits = pureNumMatch[1];
+      const val = parseInt(rawDigits, 10);
+      const isYear = val >= 2020 && val <= 2035 && !lower.includes('đ') && !lower.includes('vnd') && !lower.includes('dong');
+      if (!isYear && val > 0) {
+        const digitsPosInMatch = pureNumMatch[0].indexOf(rawDigits);
+        const startIndex = pureNumMatch.index + digitsPosInMatch;
+        let endIndex = startIndex + rawDigits.length;
+        const afterDigits = text.slice(endIndex);
+        const unitSuffixMatch = afterDigits.match(/^\s*(?:đ|vnd|dong)/i);
+        if (unitSuffixMatch) {
+          endIndex += unitSuffixMatch[0].length;
+        }
+        return {
+          amount: val,
+          startIndex,
+          endIndex,
+          matchedRaw: text.slice(startIndex, endIndex),
+        };
       }
-      if (val > 0) return val;
+    }
+
+    return null;
+  }
+
+  /**
+   * Trích xuất số tiền linh hoạt và chuẩn xác từ văn bản tiếng Việt
+   */
+  public static extractAmount(text: string): number | null {
+    const info = this.extractAmountWithRange(text);
+    return info ? info.amount : null;
+  }
+
+  /**
+   * Phát hiện các lỗi gõ số tiền bị typo (nhân đôi ký tự k, oo, ký tự lạ dính liền)
+   */
+  public static detectTypo(text: string): { typoRaw: string; question: string } | null {
+    if (!text) return null;
+    const lower = text.toLowerCase();
+
+    // 1. Số tiền bị nhân đôi/nhân ba đơn vị: 115kk, 500kkk, 1trr, 1trieuu, 50nghinn
+    const doubleUnitMatch = lower.match(/\b(\d+(?:[.,]\d+)?)\s*(k{2,}|oo|k0|trr|triệuu|nghinn|ngann)\b/i);
+    if (doubleUnitMatch) {
+      return {
+        typoRaw: doubleUnitMatch[0],
+        question: `⚠️ Số tiền "**${doubleUnitMatch[0]}**" dường như bị lỗi typo (thừa ký tự).\n👉 Bạn vui lòng nhắn lại chính xác **số tiền** nhé (ví dụ: **115k**, **115.000**):`,
+      };
+    }
+
+    // 2. Kèm ký tự dính liền ngay sau số và k (không có khoảng trắng): 115kj, 115kl, 115kv
+    const attachedCharMatch = lower.match(/\b(\d+)(?:k|tr)([a-z]{1,2})(?:$|[^a-zà-ỹ0-9])/i);
+    if (attachedCharMatch && !['kg', 'km', 'kw'].includes(attachedCharMatch[2])) {
+      const typoSnippet = `${attachedCharMatch[1]}k${attachedCharMatch[2]}`;
+      return {
+        typoRaw: typoSnippet,
+        question: `⚠️ Số tiền "**${typoSnippet}**" dường như bị gõ nhầm ký tự "${attachedCharMatch[2]}".\n👉 Bạn vui lòng nhắn lại **số tiền** nhé (ví dụ: **115k**, **115.000**):`,
+      };
+    }
+
+    // 3. Dấu chấm lửng dính vào số: 115k.. hoặc 115..
+    const dotTypoMatch = lower.match(/\b(\d+)\s*(?:\.{2,}|,{2,})\b/);
+    if (dotTypoMatch) {
+      return {
+        typoRaw: dotTypoMatch[0],
+        question: `⚠️ Số tiền "**${dotTypoMatch[0]}**" dường như bị lỗi dấu chấm/phẩy.\n👉 Bạn vui lòng nhắn lại **số tiền** nhé (ví dụ: **115k**, **115.000**):`,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Phát hiện thông tin chưa đủ ý hoặc lỗi typo để đặt câu hỏi làm rõ
+   */
+  public static detectTypoOrIncomplete(
+    text: string,
+    categories: Category[] = []
+  ): {
+    type: 'TYPO_AMOUNT' | 'MISSING_AMOUNT' | 'MISSING_CATEGORY_OR_REASON' | 'MISSING_TYPE' | 'UNCLEAR';
+    draft: PendingDraft;
+    waitingFor: WaitingField;
+    question: string;
+  } | null {
+    if (!text) return null;
+    const raw = text.trim();
+    const lower = raw.toLowerCase();
+    const stripped = removeVietnameseTones(lower);
+
+    // Chặn các câu lệnh hệ thống
+    if (
+      /\b(?:xoa|huy|sua|doi|thay|chinh|baocao|thongke|kiemtra|lichsu|xem)\b/i.test(stripped) ||
+      lower.includes('báo cáo') ||
+      lower.includes('thống kê')
+    ) {
+      return null;
+    }
+
+    // 1. Kiểm tra lỗi typo số tiền trước tiên
+    const typo = this.detectTypo(raw);
+    if (typo) {
+      let txType: 'INCOME' | 'EXPENSE' = 'INCOME';
+      if (lower.startsWith('-') || /^(?:chi|trả|mua)/i.test(lower)) {
+        txType = 'EXPENSE';
+      }
+      return {
+        type: 'TYPO_AMOUNT',
+        draft: { transaction_type: txType, raw_input: raw },
+        waitingFor: 'amount',
+        question: typo.question,
+      };
+    }
+
+    // 2. Kiểm tra dấu hiệu Thu '+' hoặc Chi '-' nhưng THIẾU SỐ TIỀN
+    const isIncome =
+      lower.startsWith('+') ||
+      /^(?:thu\s+|bán\s+|ban\s+|nhận\s+|đơn\s+|don\s+)/i.test(lower);
+    const isExpense =
+      lower.startsWith('-') ||
+      /^(?:chi\s+|trả\s+|tra\s+|mua\s+|tiền\s+ra\s+|phí\s+|phi\s+)/i.test(lower);
+
+    const amountInfo = this.extractAmountWithRange(raw);
+
+    if ((isIncome || isExpense) && !amountInfo) {
+      const txType: 'INCOME' | 'EXPENSE' = isIncome ? 'INCOME' : 'EXPENSE';
+      const cleanText = raw
+        .replace(/^[+\-\/#\s]+/, '')
+        .replace(/^(?:thu|bán|ban|chi|trả|tra|mua|đơn|don)\s+/i, '')
+        .trim();
+
+      let matchedCat: Category | null = null;
+      for (const cat of categories) {
+        if (hasWholePhrase(cleanText.toLowerCase(), cat.name.toLowerCase())) {
+          matchedCat = cat;
+          break;
+        }
+      }
+
+      let itemName = cleanText;
+      let note = '';
+      if (matchedCat) {
+        itemName = matchedCat.name;
+        const remainder = cleanText.replace(new RegExp(matchedCat.name, 'i'), '').trim();
+        note = remainder.replace(/^[\s\-:,]+/, '').trim();
+      }
+
+      const label = txType === 'INCOME' ? 'đơn bán' : 'khoản chi';
+      const icon = txType === 'INCOME' ? '🌸' : '💸';
+      const noteDisplay = note ? ` (${note})` : '';
+
+      const question =
+        `${icon} Đã nhận ${label}: **${itemName || 'chưa rõ'}**${noteDisplay}!\n` +
+        `👉 Bạn cho mình xin **số tiền** nhé (ví dụ: **115k**, **115.000**):`;
+
+      return {
+        type: 'MISSING_AMOUNT',
+        draft: {
+          transaction_type: txType,
+          category_id: matchedCat?.id,
+          category_name: matchedCat?.name || itemName,
+          item_name: itemName,
+          note: note || undefined,
+          description: note || itemName,
+          raw_input: raw,
+        },
+        waitingFor: 'amount',
+        question,
+      };
+    }
+
+    // 3. Có dấu '+' hoặc '-' kèm số tiền nhưng KHÔNG CÓ MẶT HÀNG / LÝ DO (ví dụ: "+ 115k" hoặc "- 50k")
+    if ((isIncome || isExpense) && amountInfo) {
+      const before = raw.slice(0, amountInfo.startIndex).replace(/^[+\-\/#\s]+/, '').trim();
+      const after = raw.slice(amountInfo.endIndex).replace(/^[+\-\/#\s:,]+/, '').trim();
+
+      if (!before && !after) {
+        const txType: 'INCOME' | 'EXPENSE' = isIncome ? 'INCOME' : 'EXPENSE';
+        const formattedAmt = ZaloBotService.formatCurrency(amountInfo.amount);
+        const icon = txType === 'INCOME' ? '🌸' : '💸';
+        const typeWord = txType === 'INCOME' ? 'Thu' : 'Chi';
+        const exampleWord = txType === 'INCOME' ? 'Thư hoa khách hàng Abc, Tủ hoa' : 'Tiền điện, Ruy băng';
+
+        const question =
+          `${icon} Đã nhận số tiền: **${formattedAmt}** (${typeWord})!\n` +
+          `👉 Bạn cho mình xin **tên mặt hàng** hoặc **lý do/khách hàng** nhé (ví dụ: **${exampleWord}**):`;
+
+        return {
+          type: 'MISSING_CATEGORY_OR_REASON',
+          draft: {
+            transaction_type: txType,
+            amount: amountInfo.amount,
+            raw_input: raw,
+          },
+          waitingFor: 'category_or_reason',
+          question,
+        };
+      }
+    }
+
+    // 4. Có số tiền và ghi chú nhưng KHÔNG CÓ '+' hoặc '-' và KHÔNG rõ danh mục
+    // Ví dụ: "115k khách hàng Abc"
+    if (!isIncome && !isExpense && amountInfo) {
+      const before = raw.slice(0, amountInfo.startIndex).trim();
+      const after = raw.slice(amountInfo.endIndex).trim();
+      const note = (before + ' ' + after).replace(/^[+\-\/#\s:,]+/, '').trim();
+
+      let matchedCat: Category | null = null;
+      for (const cat of categories) {
+        if (hasWholePhrase(note.toLowerCase(), cat.name.toLowerCase())) {
+          matchedCat = cat;
+          break;
+        }
+      }
+
+      if (!matchedCat && note.length > 0) {
+        const formattedAmt = ZaloBotService.formatCurrency(amountInfo.amount);
+        const question =
+          `🤔 Khoản **${formattedAmt}** (${note}) là **THU** (bán hàng) hay **CHI** (chi phí) ạ?\n` +
+          `👉 Bạn nhắn **+** (Thu) hoặc **-** (Chi) giúp shop nhé!`;
+
+        return {
+          type: 'MISSING_TYPE',
+          draft: {
+            amount: amountInfo.amount,
+            note,
+            description: note,
+            raw_input: raw,
+          },
+          waitingFor: 'type',
+          question,
+        };
+      }
     }
 
     return null;
@@ -1055,58 +1569,129 @@ export class ZaloBotHandler {
   }
 
   /**
-   * Bộ phân tích nhanh cục bộ (Tier 1.5) - Tốc độ siêu tốc < 10ms, 0 Token LLM
+   * Bộ phân tích nhanh cục bộ (Tier 1.5) - Rule-based Fast Parser (< 10ms, 0 Token LLM)
+   * Tuân thủ quy tắc rõ ràng:
+   * - THU: Bắt đầu bằng '+' (hoặc 'thu', 'bán', 'đơn'...) -> + [mặt hàng] [số tiền] [lý do/ghi chú]
+   * - CHI: Bắt đầu bằng '-' (hoặc 'chi', 'trả', 'mua'...) -> - [khoản chi] [số tiền] [lý do/ghi chú]
+   * - Tự nhiên: [mặt hàng] [số tiền] nếu khớp danh mục
+   * - Sau số tiền là lý do / ghi chú (ví dụ: "+ thư hoa 115k khách hàng Abc" -> note: "khách hàng Abc")
+   * - Chặn tuyệt đối các từ khóa hành động: xóa, hủy, sửa, đổi, tìm, báo cáo...
    */
   public static parseQuickInput(
     text: string,
     categories: Category[] = []
-  ): {
-    amount: number;
-    category_name: string;
-    transaction_type: 'INCOME' | 'EXPENSE';
-    description: string;
-  } | null {
+  ): QuickParsedResult | null {
     if (!text) return null;
-    const raw = text.trim().replace(/^\/+\s*/, '');
+    const raw = text.trim();
     const lower = raw.toLowerCase();
     const stripped = removeVietnameseTones(lower);
 
-    // 1. Phân loại Thu / Chi sơ bộ từ tiền tố hoặc từ khóa
-    let explicitType: 'INCOME' | 'EXPENSE' | null = null;
+    // 0. CHẶN NGUY CƠ NHẬN NHẦM: Nếu tin nhắn chứa động từ hành vi (xóa, sửa, báo cáo...) -> KHÔNG parse tạo giao dịch!
     if (
-      lower.startsWith('-') ||
-      lower.includes('chi ') ||
-      lower.includes('tiêu ') ||
-      lower.includes('mua ') ||
-      lower.includes('trả ')
+      /\b(?:xoa|huy|sua|doi|thay|chinh|baocao|thongke|kiemtra|lichsu|xem)\b/i.test(stripped) ||
+      lower.includes('báo cáo') ||
+      lower.includes('thống kê') ||
+      lower.includes('kiểm tra')
     ) {
-      explicitType = 'EXPENSE';
-    } else if (lower.startsWith('+') || lower.includes('thu ') || lower.includes('bán ')) {
-      explicitType = 'INCOME';
+      return null;
     }
 
-    // 2. Trích xuất số tiền linh hoạt
-    const amount = this.extractAmount(lower);
-    if (!amount || amount <= 0) return null;
+    // 1. Phân loại Thu / Chi theo quy tắc rõ ràng
+    let explicitType: 'INCOME' | 'EXPENSE' | null = null;
+
+    // RULE THU: Bắt đầu bằng '+', hoặc chứa '+ [tiền]', hoặc bắt đầu bằng từ khóa thu/bán/đơn
+    const isIncomePrefix =
+      lower.startsWith('+') ||
+      /\+\s*\d/i.test(lower) ||
+      /^(?:thu\s+|bán\s+|ban\s+|nhận\s+|nhan\s+|tiền\s+vào\s+|đơn\s+|don\s+)/i.test(lower);
+
+    // RULE CHI: Bắt đầu bằng '-', hoặc chứa '- [tiền]', hoặc bắt đầu bằng từ khóa chi/trả/mua
+    const isExpensePrefix =
+      lower.startsWith('-') ||
+      /-\s*\d/i.test(lower) ||
+      /^(?:chi\s+|trả\s+|tra\s+|mua\s+|tiền\s+ra\s+|phí\s+|phi\s+|nộp\s+|nop\s+)/i.test(lower);
+
+    if (isIncomePrefix && !isExpensePrefix) {
+      explicitType = 'INCOME';
+    } else if (isExpensePrefix) {
+      explicitType = 'EXPENSE';
+    }
+
+    // 2. Trích xuất số tiền linh hoạt kèm vị trí
+    const amountInfo = this.extractAmountWithRange(raw);
+    if (!amountInfo || amountInfo.amount <= 0) return null;
+
+    const amount = amountInfo.amount;
+
+    // Bóc tách phần văn bản trước và sau số tiền
+    let beforeRaw = raw.slice(0, amountInfo.startIndex).trim();
+    let afterRaw = raw.slice(amountInfo.endIndex).trim();
+
+    // Làm sạch từ khóa ngày tháng năm
+    const cleanDateTokens = (str: string) =>
+      str
+        .replace(/\b(?:hôm qua|hom qua|hôm kia|hom kia|hôm nay|hom nay)\b/gi, '')
+        .replace(/\b(?:ngày\s+)?\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/gi, '')
+        .replace(/\b(?:ngày\s+)?\d{1,2}\s+(?:tháng|thg)\s+\d{1,2}(?:\s+(?:năm\s+)?\d{4})?\b/gi, '')
+        .trim();
+
+    beforeRaw = cleanDateTokens(beforeRaw);
+    afterRaw = cleanDateTokens(afterRaw);
+
+    // Làm sạch tiền tố (+, -, thu, bán, chi, mua...)
+    const cleanPrefix = (str: string) =>
+      str
+        .replace(/^[+\-\/#\s]+/, '')
+        .replace(/\s*[+\-]\s*$/, '')
+        .replace(/^(?:thu|bán|ban|chi|trả|tra|mua|đơn|don)\s+/i, '')
+        .trim();
+
+    let beforeText = cleanPrefix(beforeRaw);
+    let afterText = afterRaw.replace(/^[+\-\/#\s:,]+/, '').trim();
 
     // 3. Khớp danh mục động:
-    // a. Khớp trực tiếp qua danh sách danh mục từ database (ưu tiên tên dài trước)
     let matchedCategory: { name: string; defaultType: 'INCOME' | 'EXPENSE' } | null = null;
-    const sortedCats = [...categories].sort((a, b) => b.name.length - a.name.length);
+    let matchedFrom: 'before' | 'after' | 'full' | null = null;
+    let matchedKeyword = '';
 
-    for (const cat of sortedCats) {
-      const catLower = cat.name.toLowerCase();
-      const catStripped = removeVietnameseTones(catLower);
-      if (lower.includes(catLower) || stripped.includes(catStripped)) {
-        matchedCategory = {
-          name: cat.name,
-          defaultType: cat.type,
-        };
-        break;
+    const sortedCats = [...categories].sort((a, b) => b.name.length - a.name.length);
+    const candidateCats = explicitType
+      ? [...sortedCats.filter((c) => c.type === explicitType), ...sortedCats.filter((c) => c.type !== explicitType)]
+      : sortedCats;
+
+    // a. Kiểm tra trong beforeText trước (ví dụ: "+ thư hoa 115k khách hàng Abc" -> beforeText là "thư hoa")
+    if (beforeText) {
+      const beforeLower = beforeText.toLowerCase();
+      const beforeStripped = removeVietnameseTones(beforeLower);
+      for (const cat of candidateCats) {
+        const catLower = cat.name.toLowerCase();
+        const catStripped = removeVietnameseTones(catLower);
+        if (hasWholePhrase(beforeLower, catLower) || hasWholePhrase(beforeStripped, catStripped)) {
+          matchedCategory = { name: cat.name, defaultType: cat.type };
+          matchedFrom = 'before';
+          matchedKeyword = cat.name;
+          break;
+        }
       }
     }
 
-    // b. Nếu chưa khớp theo tên, kiểm tra các từ khóa viết tắt / tiếng lóng quen thuộc của shop
+    // b. Nếu chưa thấy, kiểm tra trong afterText (ví dụ: "+ 115k thư hoa khách hàng Abc" -> afterText là "thư hoa khách hàng Abc")
+    if (!matchedCategory && afterText) {
+      const afterLower = afterText.toLowerCase();
+      const afterStripped = removeVietnameseTones(afterLower);
+      for (const cat of candidateCats) {
+        const catLower = cat.name.toLowerCase();
+        const catStripped = removeVietnameseTones(catLower);
+        if (hasWholePhrase(afterLower, catLower) || hasWholePhrase(afterStripped, catStripped)) {
+          matchedCategory = { name: cat.name, defaultType: cat.type };
+          matchedFrom = 'after';
+          matchedKeyword = cat.name;
+          break;
+        }
+      }
+    }
+
+    // c. Kiểm tra các từ khóa quen thuộc tích hợp của shop
     if (!matchedCategory) {
       const builtInKeywords: Array<{
         name: string;
@@ -1119,40 +1704,107 @@ export class ZaloBotHandler {
         { name: 'Thiệp lẻ', defaultType: 'INCOME', keywords: ['thiệp lẻ', 'thiep le', 'thiệp', 'thiep'] },
         { name: 'Khung ảnh', defaultType: 'INCOME', keywords: ['khung ảnh', 'khung anh', 'khung hình', 'khung hinh', 'khung'] },
         { name: 'Cúp hoa', defaultType: 'INCOME', keywords: ['cúp hoa', 'cup hoa', 'cúp', 'cup'] },
-        { name: 'Móc khóa', defaultType: 'INCOME', keywords: ['móc khóa', 'móc khoá', 'moc khoa', 'khoá', 'khóa'] },
+        { name: 'Móc khóa', defaultType: 'INCOME', keywords: ['móc khóa', 'móc khoá', 'moc khoa'] },
         { name: 'Nguyên vật liệu', defaultType: 'EXPENSE', keywords: ['nguyên vật liệu', 'nguyen vat lieu', 'vật liệu', 'vat lieu', 'nguyên liệu', 'nguyen lieu', 'phụ liệu', 'phu lieu', 'mua đồ', 'mua do', 'mua hoa', 'hoa sáp', 'giấy gói', 'ruy băng', 'hộp hoa', 'keo nến', 'nvl'] },
-        { name: 'Ship bưu cục', defaultType: 'EXPENSE', keywords: ['ship bưu cục', 'ship buu cuc', 'bưu cục', 'buu cuc', 'gửi hàng', 'gui hang', 'viettel post', 'vnpost', 'ghtk', 'giao hàng tiết kiệm', 'bưu điện', 'buu dien', 'ship thường', 'chuyển phát', 'phí ship', 'phi ship', 'tiền ship', 'tien ship', 'ship'] },
+        { name: 'Ship bưu cục', defaultType: 'EXPENSE', keywords: ['ship bưu cục', 'ship buu cuc', 'bưu cục', 'buu cuc', 'gửi hàng', 'gui hang', 'viettel post', 'vnpost', 'ghtk', 'giao hàng tiết kiệm', 'bưu điện', 'buu dien', 'ship thường', 'chuyển phát'] },
         { name: 'Ship hoả tốc', defaultType: 'EXPENSE', keywords: ['ship hoả tốc', 'ship hỏa tốc', 'ship hoa toc', 'hoả tốc', 'hỏa tốc', 'hoa toc', 'grab', 'ahamove', 'giao gấp', 'ship gấp', 'lalamove', 'be delivery'] },
         { name: 'Khác', defaultType: 'EXPENSE', keywords: ['khác', 'khac', 'chi phí', 'chi tieu'] },
       ];
 
-      for (const cat of builtInKeywords) {
-        for (const kw of cat.keywords) {
-          if (lower.includes(kw) || stripped.includes(removeVietnameseTones(kw))) {
-            matchedCategory = { name: cat.name, defaultType: cat.defaultType };
-            break;
+      const checkList = [
+        { text: beforeText, from: 'before' as const },
+        { text: afterText, from: 'after' as const },
+      ];
+
+      for (const item of checkList) {
+        if (!item.text) continue;
+        const lowerItem = item.text.toLowerCase();
+        const strippedItem = removeVietnameseTones(lowerItem);
+
+        for (const cat of builtInKeywords) {
+          for (const kw of cat.keywords) {
+            if (hasWholePhrase(lowerItem, kw) || hasWholePhrase(strippedItem, removeVietnameseTones(kw))) {
+              matchedCategory = { name: cat.name, defaultType: cat.defaultType };
+              matchedFrom = item.from;
+              matchedKeyword = kw;
+              break;
+            }
           }
+          if (matchedCategory) break;
         }
         if (matchedCategory) break;
       }
     }
 
-    // Nếu không có tên danh mục trong các mặt hàng, nhưng là khoản chi rõ ràng -> 'Khác'
-    if (!matchedCategory && explicitType === 'EXPENSE') {
-      matchedCategory = { name: 'Khác', defaultType: 'EXPENSE' };
+    // 4. TRƯỜNG HỢP CÓ DẤU HIỆU RULE RÕ RÀNG (+ HOẶC -):
+    // Luôn ghi nhận, không bao giờ bắt cứng danh mục!
+    if (explicitType === 'INCOME') {
+      if (!matchedCategory || matchedCategory.defaultType !== 'INCOME') {
+        const defaultIncomeCat = categories.find((c) => c.type === 'INCOME') || { name: 'Khác', type: 'INCOME' as const };
+        matchedCategory = { name: defaultIncomeCat.name, defaultType: 'INCOME' };
+      }
+    } else if (explicitType === 'EXPENSE') {
+      if (!matchedCategory || matchedCategory.defaultType !== 'EXPENSE') {
+        const defaultExpenseCat =
+          categories.find((c) => c.type === 'EXPENSE' && c.name.toLowerCase() === 'khác') ||
+          categories.find((c) => c.type === 'EXPENSE') ||
+          { name: 'Khác', type: 'EXPENSE' as const };
+        matchedCategory = { name: defaultExpenseCat.name, defaultType: 'EXPENSE' };
+      }
     }
 
+    // Nếu không có dấu hiệu '+' hoặc '-' và cũng không khớp danh mục nào:
+    // Trả về null để tránh ghi nhầm tin nhắn trò chuyện thông thường!
     if (!matchedCategory) {
       return null;
     }
 
     const finalType = explicitType || matchedCategory.defaultType;
 
+    // 5. BÓC TÁCH MẶT HÀNG (ITEM) VÀ LÝ DO / GHI CHÚ (NOTE):
+    // Quy tắc: Sau số tiền là lý do!
+    let itemName = '';
+    let note = '';
+
+    if (matchedFrom === 'before') {
+      // Trước số tiền là mặt hàng, sau số tiền là lý do
+      // Ví dụ: "+ thư hoa 115k khách hàng Abc"
+      itemName = beforeText;
+      note = afterText;
+    } else if (matchedFrom === 'after') {
+      // Số tiền đứng trước mặt hàng: "+ 115k thư hoa khách hàng Abc"
+      // Hoặc: "- 35k ruy băng gửi bạn An"
+      const catWord = matchedKeyword || matchedCategory.name;
+      const strippedAfter = afterText.replace(new RegExp(catWord, 'i'), '').trim();
+      itemName = catWord;
+      note = strippedAfter.replace(/^[+\-\/#\s:,]+/, '').trim();
+    } else {
+      itemName = beforeText || (afterText ? afterText.split(/\s+/).slice(0, 2).join(' ') : matchedCategory.name);
+      note = afterText;
+    }
+
+    // Làm sạch note
+    note = note.replace(/^[+\-\/#\s:,]+/, '').trim();
+
+    // Xác định description lưu vào database
+    let description = '';
+    if (note) {
+      if (matchedCategory.name !== 'Khác') {
+        description = note; // Ví dụ: "khách hàng Abc"
+      } else {
+        description = itemName ? `${itemName} - ${note}` : note;
+      }
+    } else {
+      description = itemName || matchedCategory.name;
+    }
+
     return {
       amount,
       category_name: matchedCategory.name,
       transaction_type: finalType,
-      description: raw.replace(/^[+-]\s*/, '').trim(),
+      item_name: itemName || matchedCategory.name,
+      note: note || undefined,
+      description: description || matchedCategory.name,
     };
   }
 }

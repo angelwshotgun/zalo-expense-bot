@@ -80,13 +80,19 @@ export class ZaloBotService {
       year: 'numeric',
     });
 
+    const finalCatName = tx.category?.name || categoryName;
+    const hasDistinctNote = tx.description && tx.description.toLowerCase().trim() !== finalCatName.toLowerCase().trim();
+    const noteLine = hasDistinctNote
+      ? `📝 **Lý do / Ghi chú:** ${tx.description}\n`
+      : (tx.description ? `📝 **Nội dung:** ${tx.description}\n` : '');
+
     return (
       `✅ **ĐÃ LƯU THÀNH CÔNG!**\n\n` +
       `📌 **Loại:** ${typeLabel}\n` +
       `💵 **Số tiền:** **${amountStr}**\n` +
-      `🏷️ **${catLabel}:** ${icon} **${tx.category?.name || categoryName}**\n` +
+      `🏷️ **${catLabel}:** ${icon} **${finalCatName}**\n` +
       (authorName ? `👤 **Người ghi:** ${authorName}\n` : '') +
-      (tx.description ? `📝 **Nội dung:** ${tx.description}\n` : '') +
+      noteLine +
       `🕒 **Thời gian:** ${dateStr}\n\n` +
       `━━━━━━━━━━━━━━━━━━\n` +
       `💡 _Nhắn **"xóa"** để hủy hoặc **"sửa thành..."** để đổi thông tin._\n` +

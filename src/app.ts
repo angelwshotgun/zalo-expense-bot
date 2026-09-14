@@ -160,6 +160,116 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
+  // ===========================================================================
+  // 4.6. QUẢN LÝ GIAO DỊCH THU & CHI THỦ CÔNG (TRANSACTIONS CRUD)
+  // ===========================================================================
+
+  // Lấy danh sách giao dịch có phân trang, bộ lọc và thống kê KPI
+  app.get('/api/transactions', async (request, reply) => {
+    try {
+      const query = request.query as any;
+      const page = query?.page ? parseInt(query.page, 10) : 1;
+      const limit = query?.limit ? parseInt(query.limit, 10) : 20;
+      const type = query?.type as ('ALL' | 'INCOME' | 'EXPENSE' | undefined);
+      const startDate = query?.startDate as string | undefined;
+      const endDate = query?.endDate as string | undefined;
+      const categoryId = query?.categoryId ? parseInt(query.categoryId, 10) : undefined;
+      const search = query?.search as string | undefined;
+
+      const result = await DatabaseService.getAllTransactions({
+        page,
+        limit,
+        type,
+        startDate,
+        endDate,
+        categoryId,
+        search,
+      });
+
+      return reply.send({ success: true, ...result });
+    } catch (error) {
+      return reply.status(500).send({ success: false, error: (error as Error).message });
+    }
+  });
+
+  // Thêm giao dịch mới thủ công từ Web Admin (Yêu cầu PIN Admin)
+  app.post('/api/transactions', async (request, reply) => {
+    if (!verifyAdmin(request, reply)) return;
+    try {
+      const body = request.body as any;
+      const amount = Number(body?.amount);
+      if (!amount || amount <= 0) {
+        return reply.status(400).send({ success: false, error: 'Số tiền không hợp lệ (phải lớn hơn 0).' });
+      }
+
+      const type = body?.transaction_type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+      const categoryId = body?.category_id ? parseInt(body.category_id, 10) : null;
+      const description = body?.description?.trim() || null;
+      const transactionDate = body?.transaction_date || new Date().toISOString();
+
+      const newTx = await DatabaseService.adminCreateTransaction({
+        amount,
+        category_id: categoryId,
+        transaction_type: type,
+        description,
+        transaction_date: transactionDate,
+      });
+
+      return reply.send({ success: true, data: newTx, message: 'Đã tạo giao dịch thành công' });
+    } catch (error) {
+      return reply.status(500).send({ success: false, error: (error as Error).message });
+    }
+  });
+
+  // Cập nhật giao dịch thủ công (Yêu cầu PIN Admin)
+  app.put<{ Params: { id: string } }>('/api/transactions/:id', async (request, reply) => {
+    if (!verifyAdmin(request, reply)) return;
+    try {
+      const id = request.params.id;
+      const body = request.body as any;
+
+      const updates: any = {};
+      if (body?.amount !== undefined) {
+        const amt = Number(body.amount);
+        if (amt <= 0) return reply.status(400).send({ success: false, error: 'Số tiền phải lớn hơn 0.' });
+        updates.amount = amt;
+      }
+      if (body?.category_id !== undefined) {
+        updates.category_id = body.category_id ? parseInt(body.category_id, 10) : null;
+      }
+      if (body?.transaction_type) {
+        updates.transaction_type = body.transaction_type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+      }
+      if (body?.description !== undefined) {
+        updates.description = body.description?.trim() || null;
+      }
+      if (body?.transaction_date) {
+        updates.transaction_date = body.transaction_date;
+      }
+
+      const updated = await DatabaseService.adminUpdateTransaction(id, updates);
+      if (!updated) {
+        return reply.status(404).send({ success: false, error: 'Không tìm thấy giao dịch để cập nhật.' });
+      }
+
+      return reply.send({ success: true, data: updated, message: 'Đã cập nhật giao dịch thành công' });
+    } catch (error) {
+      return reply.status(500).send({ success: false, error: (error as Error).message });
+    }
+  });
+
+  // Xóa giao dịch thủ công (Yêu cầu PIN Admin)
+  app.delete<{ Params: { id: string } }>('/api/transactions/:id', async (request, reply) => {
+    if (!verifyAdmin(request, reply)) return;
+    try {
+      const id = request.params.id;
+      await DatabaseService.adminDeleteTransaction(id);
+      return reply.send({ success: true, message: 'Đã xóa giao dịch thành công' });
+    } catch (error) {
+      return reply.status(500).send({ success: false, error: (error as Error).message });
+    }
+  });
+
   // 5. Zalo OA Webhook Receiver Endpoint
   app.post<{ Body: ZaloWebhookPayload }>(
     '/webhook/zalo',
